@@ -1,0 +1,45 @@
+import time
+import paho.mqtt.client as mqtt
+import json
+import random  # Para simular sensores
+
+# Función callback para confirmar publicación
+def on_publish(client, userdata, mid, reason_code, properties):
+    try:
+        userdata.remove(mid)
+    except KeyError:
+        print("No hay conexión")
+
+# Datos pendientes por confirmar
+unacked_publish = set()
+
+# Conectar con broker MQTT
+mqttc = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+mqttc.on_publish = on_publish
+mqttc.user_data_set(unacked_publish)
+mqttc.connect("broker.hivemq.com", 1883)
+mqttc.loop_start()
+
+try:
+    while True:
+        # Simulación de datos desde NUCLEO
+        data = {
+            "gas": round(random.uniform(300, 600), 2),          # ppm
+            "vibracion": round(random.uniform(0, 2), 2),       # g
+            "huella": random.randint(1, 5)                     # id usuario
+        }
+
+        # Convertir a JSON
+        payload = json.dumps(data)
+
+        # Publicar en topic
+        msg_info = mqttc.publish("proyecto/sensores", payload, qos=2)
+        unacked_publish.add(msg_info.mid)
+
+        print("Publicado:", payload)
+
+        time.sleep(2)  # esperar 2 segundos antes de enviar siguiente dato
+
+finally:
+    mqttc.disconnect()
+    mqttc.loop_stop()
