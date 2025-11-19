@@ -578,7 +578,7 @@ static void MX_GPIO_Init(void)
   /* USER CODE END MX_GPIO_Init_2 */
 }
 
-	/* USER CODE BEGIN 4 */
+/* USER CODE BEGIN 4 */
 
 	//-------------------ACELEROMETRO----------------
 	void ADXL_Init(void){
@@ -731,6 +731,24 @@ static void MX_GPIO_Init(void)
 	    );
 
 	    HAL_UART_Transmit(&huart3, tx.bytes, tx.longitud, 1000);
+
+	    tx.longitud = (uint16_t)snprintf(
+			(char*)tx.bytes,
+			sizeof(tx.bytes),
+			"X: %.2f  Y: %.2f  Z: %.2f\r\n"
+			"Temp: %.2f C, Hum: %.2f %%\r\n"
+			"AQI: %d, TVOC: %d ppb, eCO2: %d ppm\r\n",
+			datos.x_axis,
+			datos.y_axis,
+			datos.z_axis,
+			aht21.temperature,
+			aht21.humidity,
+			ens160.aqi,
+			ens160.tvoc,
+			ens160.eco2
+		);
+
+		HAL_UART_Transmit(&huart2, tx.bytes, tx.longitud, 1000);
 	}
 
 
