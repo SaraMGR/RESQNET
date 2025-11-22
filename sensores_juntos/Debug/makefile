@@ -60,8 +60,8 @@ all: main-build
 main-build: sensores_juntos.elf secondary-outputs
 
 # Tool invocations
-sensores_juntos.elf sensores_juntos.map: $(OBJS) $(USER_OBJS) C:\Users\sarak\TEC\5_SEMESTRE\STMCubeIDE\RESQNET\sensores_juntos\STM32H503RBTX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
-	arm-none-eabi-gcc -o "sensores_juntos.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m33 -T"C:\Users\sarak\TEC\5_SEMESTRE\STMCubeIDE\RESQNET\sensores_juntos\STM32H503RBTX_FLASH.ld" --specs=nosys.specs -Wl,-Map="sensores_juntos.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv5-sp-d16 -mfloat-abi=hard -mthumb -u _printf_float -Wl,--start-group -lc -lm -Wl,--end-group
+sensores_juntos.elf sensores_juntos.map: $(OBJS) $(USER_OBJS) C:\TEC1\5to_Semestre\sistemasEmbebidos\sensores_juntos\STM32H503RBTX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
+	arm-none-eabi-gcc -o "sensores_juntos.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m33 -T"C:\TEC1\5to_Semestre\sistemasEmbebidos\sensores_juntos\STM32H503RBTX_FLASH.ld" --specs=nosys.specs -Wl,-Map="sensores_juntos.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv5-sp-d16 -mfloat-abi=hard -mthumb -u _printf_float -Wl,--start-group -lc -lm -Wl,--end-group
 	@echo 'Finished building target: $@'
 	@echo ' '
 
