@@ -297,18 +297,25 @@ int main(void)
 
 		// Detección
 		if (magnitudLateral > 0.01 && magnitudLateral < 0.03) {
-			snprintf((char*)tx.bytes, sizeof(tx.bytes), "Temblor leve detectado\r\n");
+			snprintf((char*)tx.bytes, sizeof(tx.bytes), "TEMBLOR LEVE DETECTADO\r\n");
 			HAL_UART_Transmit(&huart3, tx.bytes, strlen((char*)tx.bytes), 1000);
+			HAL_UART_Transmit(&huart2, tx.bytes, strlen((char*)tx.bytes), 1000);
+
+
 		}
 
 		else if (magnitudLateral >= 0.03 && magnitudLateral < 0.05) {
-					snprintf((char*)tx.bytes, sizeof(tx.bytes), "Temblor fuerte detectado\r\n");
-					HAL_UART_Transmit(&huart3, tx.bytes, strlen((char*)tx.bytes), 1000);
-				}
+			snprintf((char*)tx.bytes, sizeof(tx.bytes), "TEMBLOR FUERTE DETECTADO\r\n");
+			HAL_UART_Transmit(&huart3, tx.bytes, strlen((char*)tx.bytes), 1000);
+			HAL_UART_Transmit(&huart2, tx.bytes, strlen((char*)tx.bytes), 1000);
+
+		}
 
 		else if (magnitudLateral >= 0.5) {
-			snprintf((char*)tx.bytes, sizeof(tx.bytes), "Alerta\r\n");
+			snprintf((char*)tx.bytes, sizeof(tx.bytes), "ALERTA CRITICA: RIESGO ESTRUCTURAL\r\n");
 			HAL_UART_Transmit(&huart3, tx.bytes, strlen((char*)tx.bytes), 1000);
+			HAL_UART_Transmit(&huart2, tx.bytes, strlen((char*)tx.bytes), 1000);
+
 		}
 
 
@@ -336,6 +343,38 @@ int main(void)
 	  	  if(ens160.dataReady1){
 	  		  Read_ENS160_Data();
 	  		  Send_USART(); // Enviar datos por UART
+
+	  		  if(ens160.tvoc > 5300 && ens160.aqi >= 4){
+	  			snprintf((char*)tx.bytes, sizeof(tx.bytes), "ALERTA CRITICA: NIVELES TOXICOS\r\n");
+				HAL_UART_Transmit(&huart3, tx.bytes, strlen((char*)tx.bytes), 1000);
+				HAL_UART_Transmit(&huart2, tx.bytes, strlen((char*)tx.bytes), 1000);
+
+	  		  }
+	  		  else if(ens160.tvoc > 1600 && ens160.aqi >= 3){
+	  			snprintf((char*)tx.bytes, sizeof(tx.bytes), "ADVERTENCIA VENTILAR\r\n");
+				HAL_UART_Transmit(&huart3, tx.bytes, strlen((char*)tx.bytes), 1000);
+				HAL_UART_Transmit(&huart2, tx.bytes, strlen((char*)tx.bytes), 1000);
+
+	  		  }
+	  		  else if(ens160.tvoc > 530 && ens160.aqi >= 2){
+	  			snprintf((char*)tx.bytes, sizeof(tx.bytes), "VENTILAR\r\n");
+				HAL_UART_Transmit(&huart3, tx.bytes, strlen((char*)tx.bytes), 1000);
+				HAL_UART_Transmit(&huart2, tx.bytes, strlen((char*)tx.bytes), 1000);
+
+	  		  }
+	  		  else if(ens160.eco2>1000){
+	  			snprintf((char*)tx.bytes, sizeof(tx.bytes), "CO2 ELEVADO\r\n");
+				HAL_UART_Transmit(&huart3, tx.bytes, strlen((char*)tx.bytes), 1000);
+				HAL_UART_Transmit(&huart2, tx.bytes, strlen((char*)tx.bytes), 1000);
+
+	  		  }
+	  		  else{
+	  			snprintf((char*)tx.bytes, sizeof(tx.bytes), "CALIDAD AIRE BUENA\r\n");
+				HAL_UART_Transmit(&huart3, tx.bytes, strlen((char*)tx.bytes), 1000);
+				HAL_UART_Transmit(&huart2, tx.bytes, strlen((char*)tx.bytes), 1000);
+
+	  		  }
+
 	  		  ens160.dataReady1 = false; // Opcional: limpiar bandera para esperar próxima lectura
 
 	  	  }
