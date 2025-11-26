@@ -1,0 +1,8 @@
+../Core/Src/main.c:89:5:main	1
+../Core/Src/main.c:171:6:SystemClock_Config	4
+../Core/Src/main.c:222:13:MX_USART2_UART_Init	5
+../Core/Src/main.c:270:13:MX_USART3_UART_Init	5
+../Core/Src/main.c:318:13:MX_GPIO_Init	1
+../Core/Src/main.c:378:6:generar_datos_json_combinado	5
+../Core/Src/main.c:404:6:loop_nucleo_transmisor	2
+../Core/Src/main.c:420:6:Error_Handler	1
