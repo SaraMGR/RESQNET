@@ -89,6 +89,7 @@ Device_Config datos={};
 ADXL_Config acelerometro={};
 Values_ADXL values={};
 Transfer_Config tx={};
+Transfer_Config tx_debug={}; // Nuevo para mensajes internos
 
 void ADXL_Init(void);
 void Value_Conversion(void);
@@ -140,9 +141,17 @@ typedef struct{
 	float humidity;
 } AHT21_Config;
 
+typedef enum {
+    ALERTA_GAS_NINGUNA = 0,
+    ALERTA_GAS_LEVE,  // Nivel 1 (Ventilación recomendada/CO2 alto)
+    ALERTA_GAS_FUERTE, // Nivel 2 (Ventilación urgente)
+    ALERTA_GAS_CRITICA // Nivel 3 (Tóxicos/Peligro inminente)
+} GasAlertLevel_t;
 
 ENS160_Config ens160 = {};
 AHT21_Config aht21 = {};
+// Variable de estado global o de tarea (reemplaza 'gas_detectado')
+volatile GasAlertLevel_t gas_current_level = ALERTA_GAS_NINGUNA;
 
 void ENS160_Init(void);
 void ENS160_ConfigReg(void);
@@ -152,6 +161,11 @@ void ENS160_SetTempHum(float *temperature, float *humidity);
 void Read_ENS160_Data(void);
 void Send_USART(void);
 
+
+//---------------------DETECCIÓN DE SISMO-----------------------------------
+#define VENTANA_TIEMPO       2000 // 2 segundos en ms
+#define DETECCIONES_MINIMAS  5  // Aproximadamente 150 lecturas en 2s con osDelay(10)
+#define TIMEOUT_RESETEO      1000  // 0.5 segundos para resetear contadores si no hay más actividad
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -207,10 +221,29 @@ const osSemaphoreAttr_t buttonSem_attr={
 		.name = "buttonSem",
 };
 
+const float UMBRAL_TVOC_CRITICO_MIN = 10000.0;
+const int UMBRAL_AQI_CRITICO_MIN    = 5;
+const float UMBRAL_TVOC_FUERTE_MIN  = 5000.0;
+const int UMBRAL_AQI_FUERTE_MIN     = 4;
+const int UMBRAL_AQI_LEVE_MIN       = 2;
+
 volatile bool sismo_detectado = false;
-volatile bool gas_detectado = false;
+//volatile bool gas_detectado = false;
 uint32_t last_air_read_tick = 0;
 const uint32_t AIR_READ_INTERVAL_MS = 5000;
+
+//-----VARIABLES DE CONTEO Y TIEMPO PARA TEMBLOR-----
+volatile uint16_t contador_leve = 0;
+volatile uint32_t timestamp_inicio_leve = 0;
+volatile uint32_t timestamp_ultima_deteccion_leve = 0;
+
+volatile uint16_t contador_fuerte = 0;
+volatile uint32_t timestamp_inicio_fuerte = 0;
+volatile uint32_t timestamp_ultima_deteccion_fuerte = 0;
+
+volatile uint16_t contador_critico = 0;
+volatile uint32_t timestamp_inicio_critico = 0;
+volatile uint32_t timestamp_ultima_deteccion_critico = 0;
 
 //-----SEMÁFOROS-----
 
@@ -685,8 +718,10 @@ void StartSensadoTembloresTask(void *argument)
 {
     for(;;)
     {
-        // 1. Obtención y Procesamiento de datos (se mantiene igual)
+        // 1. Obtención y Procesamiento de datos del Acelerómetro
         uint8_t buffer[2];
+
+		// Leer X, Y, Z con una sola llamada o separadas (se mantiene la estructura)
         HAL_I2C_Mem_Read(&hi2c1, ADXL345_ADDR, REG_DATAX0, 1, buffer, 2, 100);
         acelerometro.rawX = (buffer[1] << 8 | buffer[0]);
         HAL_I2C_Mem_Read(&hi2c1, ADXL345_ADDR, REG_DATAY0, 1, buffer, 2, 100);
@@ -695,36 +730,146 @@ void StartSensadoTembloresTask(void *argument)
         acelerometro.rawZ = (buffer[1] << 8 | buffer[0]);
 
         Value_Conversion();
+
+		// Aplicar Filtro
         datos.acelX_filtrada = filtroSuavizado(datos.x_axis, datos.acelX_filtrada);
         datos.acelY_filtrada = filtroSuavizado(datos.y_axis, datos.acelY_filtrada);
         datos.acelZ_filtrada = filtroSuavizado(datos.z_axis, datos.acelZ_filtrada);
 
+        // Calcular deltas
         datos.deltaX = datos.acelX_filtrada - datos.prevX;
         datos.deltaY = datos.acelY_filtrada - datos.prevY;
         datos.prevX = datos.acelX_filtrada;
         datos.prevY = datos.acelY_filtrada;
 
+        // Magnitud lateral (evitar gravedad)
         float magnitudLateral = sqrt(datos.deltaX*datos.deltaX + datos.deltaY*datos.deltaY);
+        uint32_t tiempo_actual = osKernelGetTickCount(); // Usar el tick de FreeRTOS
 
-        // 2. Detección y Reporte de Sismo
-        if (magnitudLateral >= 0.05) {
-            sismo_detectado = true; // CRÍTICO
-            snprintf((char*)tx.bytes, sizeof(tx.bytes), "\rALERTA SISMICA CRITICA! (%.4f g)\r\n", magnitudLateral);
-            HAL_UART_Transmit(&huart3, tx.bytes, strlen((char*)tx.bytes), 1000);
-        }
-        else if (magnitudLateral >= 0.03) {
-            sismo_detectado = true; // FUERTE
-            snprintf((char*)tx.bytes, sizeof(tx.bytes), "\rTemblor fuerte detectado (%.4f g)\r\n", magnitudLateral);
-            HAL_UART_Transmit(&huart3, tx.bytes, strlen((char*)tx.bytes), 1000);
-        }
-        else {
-            // Si el movimiento es leve o nulo, desactiva la alerta visual de sismo
-            sismo_detectado = false;
-        }
+        // Reiniciar la bandera global de sismo, se activará en la detección CRÍTICA.
+        sismo_detectado = false;
 
-        // 3. Bloqueo (periódico, rápida respuesta)
-        osDelay(10); // 10 ms
-    }
+        // ==================== TEMBLOR LEVE ====================
+		if (magnitudLateral > 0.01 && magnitudLateral < 0.03) {
+			if (contador_leve == 0) {
+				// DEBUG: Inicia contador (solo huart3)
+				tx_debug.longitud = (uint16_t)snprintf((char*)tx_debug.bytes, sizeof(tx_debug.bytes), "Inicia contador leve\r\n");
+//				HAL_UART_Transmit(&huart3, tx_debug.bytes, tx_debug.longitud, 1000);
+				timestamp_inicio_leve = tiempo_actual;
+			}
+
+			contador_leve++;
+			timestamp_ultima_deteccion_leve = tiempo_actual;
+
+			if ((tiempo_actual - timestamp_inicio_leve) >= VENTANA_TIEMPO) {
+				if (contador_leve >= DETECCIONES_MINIMAS) {
+					// ALERTA FINAL (huart3 y huart2)
+					// ALERTA FINAL (Ahora con la variable y enviando a ambos)
+					tx.longitud = (uint16_t)snprintf((char*)tx.bytes, sizeof(tx.bytes),"\rTEMBLOR LEVE DETECTADO (%.4f g)\r\n", magnitudLateral); // <-- ¡Argumento necesario!
+
+					HAL_UART_Transmit(&huart3, tx.bytes, tx.longitud, 1000);
+					HAL_UART_Transmit(&huart2, tx.bytes, tx.longitud, 1000);
+
+					// RESETEAR
+					contador_leve = 0;
+					timestamp_inicio_leve = 0;
+				} else {
+					// Si pasó la ventana pero no las detecciones mínimas, resetear
+					contador_leve = 0;
+					timestamp_inicio_leve = 0;
+				}
+			}
+		}
+
+		// Resetear si ha pasado el TIMEOUT sin detección
+		if (contador_leve > 0 && (tiempo_actual - timestamp_ultima_deteccion_leve) > TIMEOUT_RESETEO) {
+			// DEBUG: Reseteo de contador (solo huart3)
+			tx_debug.longitud = (uint16_t)snprintf((char*)tx_debug.bytes, sizeof(tx_debug.bytes), "\rReseteo de contador leve\r\n");
+//			HAL_UART_Transmit(&huart3, tx_debug.bytes, tx_debug.longitud, 1000);
+			contador_leve = 0;
+			timestamp_inicio_leve = 0;
+		}
+
+		// ==================== TEMBLOR FUERTE ====================
+		if (magnitudLateral >= 0.03 && magnitudLateral < 0.05) {
+			if (contador_fuerte == 0) {
+				// DEBUG: Inicia contador (solo huart3)
+				tx_debug.longitud = (uint16_t)snprintf((char*)tx_debug.bytes, sizeof(tx_debug.bytes), "Inicia contador fuerte\r\n");
+//				HAL_UART_Transmit(&huart3, tx_debug.bytes, tx_debug.longitud, 1000);
+				timestamp_inicio_fuerte = tiempo_actual;
+			}
+
+			contador_fuerte++;
+			timestamp_ultima_deteccion_fuerte = tiempo_actual;
+
+			if ((tiempo_actual - timestamp_inicio_fuerte) >= VENTANA_TIEMPO) {
+				if (contador_fuerte >= DETECCIONES_MINIMAS) {
+					// ALERTA FINAL (huart3 y huart2)
+					tx.longitud = (uint16_t)snprintf((char*)tx.bytes, sizeof(tx.bytes), "\rTEMBLOR FUERTE DETECTADO (%.4f g)\r\n", magnitudLateral);
+					HAL_UART_Transmit(&huart3, tx.bytes, tx.longitud, 1000);
+					HAL_UART_Transmit(&huart2, tx.bytes, tx.longitud, 1000);
+
+					// RESETEAR
+					contador_fuerte = 0;
+					timestamp_inicio_fuerte = 0;
+				} else {
+					contador_fuerte = 0;
+					timestamp_inicio_fuerte = 0;
+				}
+			}
+		}
+
+		if (contador_fuerte > 0 && (tiempo_actual - timestamp_ultima_deteccion_fuerte) > TIMEOUT_RESETEO) {
+			// DEBUG: Reseteo de contador (solo huart3)
+			tx_debug.longitud = (uint16_t)snprintf((char*)tx_debug.bytes, sizeof(tx_debug.bytes), "Reseteo de contador fuerte\r\n");
+//			HAL_UART_Transmit(&huart3, tx_debug.bytes, tx_debug.longitud, 1000);
+			contador_fuerte = 0;
+			timestamp_inicio_fuerte = 0;
+		}
+
+		// ==================== CRÍTICO ====================
+		if (magnitudLateral >= 0.05) {
+			sismo_detectado = true;
+			if (contador_critico == 0) {
+				// DEBUG: Inicia contador (solo huart3)
+				tx_debug.longitud = (uint16_t)snprintf((char*)tx_debug.bytes, sizeof(tx_debug.bytes), "Inicia contador critico\r\n");
+//				HAL_UART_Transmit(&huart3, tx_debug.bytes, tx_debug.longitud, 1000);
+				timestamp_inicio_critico = tiempo_actual;
+			}
+
+			contador_critico++;
+			timestamp_ultima_deteccion_critico = tiempo_actual;
+
+			if ((tiempo_actual - timestamp_inicio_critico) >= VENTANA_TIEMPO) {
+				if (contador_critico >= DETECCIONES_MINIMAS) {
+					// ALERTA FINAL (huart3 y huart2)
+					tx.longitud = (uint16_t)snprintf((char*)tx.bytes, sizeof(tx.bytes), "\rALERTA CRITICA: RIESGO ESTRUCTURAL (%.4f g)\r\n", magnitudLateral);
+					HAL_UART_Transmit(&huart3, tx.bytes, tx.longitud, 1000);
+					HAL_UART_Transmit(&huart2, tx.bytes, tx.longitud, 1000);
+
+					// RESETEAR
+					contador_critico = 0;
+					timestamp_inicio_critico = 0;
+				} else {
+					contador_critico = 0;
+					timestamp_inicio_critico = 0;
+				}
+			}
+		} else {
+			 // Si la magnitud baja del umbral critico, se mantiene la lógica de reseteo por timeout
+		}
+
+		if (contador_critico > 0 && (tiempo_actual - timestamp_ultima_deteccion_critico) > TIMEOUT_RESETEO) {
+			// DEBUG: Reseteo de contador (solo huart3)
+			tx_debug.longitud = (uint16_t)snprintf((char*)tx_debug.bytes, sizeof(tx_debug.bytes), "Reseteo de contador critico\r\n");
+//			HAL_UART_Transmit(&huart3, tx_debug.bytes, tx_debug.longitud, 1000);
+			contador_critico = 0;
+			timestamp_inicio_critico = 0;
+		}
+
+		// Bloqueo (periódico, rápida respuesta)
+		osDelay(10); // 10 ms para una alta tasa de muestreo
+	}
 }
 
 void Send_USART() {
@@ -752,9 +897,16 @@ void Send_USART() {
     HAL_UART_Transmit(&huart2, tx.bytes, tx.longitud, 1000);
 }
 
+
+//-----VARIABLES DE CALIDAD DE AIRE-----
+extern const float UMBRAL_TVOC_CRITICO_MIN;
+extern const int UMBRAL_AQI_CRITICO_MIN;
+extern const float UMBRAL_TVOC_FUERTE_MIN;
+extern const int UMBRAL_AQI_FUERTE_MIN;
+extern const int UMBRAL_AQI_LEVE_MIN;
+
 //-------------------TAREA DE CALIDAD DEL AIRE (NORMAL PRIORIDAD)----------------
 void StartSensadoCalidadAireTask(void *argument) {
-	ens160.aqi = 1, ens160.tvoc = 200, ens160.eco2 = 600;
     for(;;)
     {
         // 1. Lectura de Sensores Ambientales (CONDICIONAL - Cada 5 segundos)
@@ -774,16 +926,55 @@ void StartSensadoCalidadAireTask(void *argument) {
 	  	    bool new_data = ens160.status & (1 << 1);
 
 	  	    if(opmode_running && !error_detected && validity_flag != 3 && new_data){
-//	  		    Read_ENS160_Data();
+	  		    Read_ENS160_Data();
 
-                // Detección de Alerta de Gas
-                if (ens160.tvoc > 500 || ens160.eco2 > 1500) {
-                    gas_detectado = true;
-                    snprintf((char*)tx.bytes, sizeof(tx.bytes), "ALERTA de GAS: TVOC/eCO2 altos! (TVOC:%d, eCO2:%d)\r\n", ens160.tvoc, ens160.eco2);
-                    HAL_UART_Transmit(&huart3, tx.bytes, strlen((char*)tx.bytes), 1000);
-                } else {
-                    gas_detectado = false;
-                }
+	  		    // === INICIO: NUEVA LÓGICA DE DETECCIÓN Y ALERTA (Basado en 3 Rangos) ===
+	  		    // Reiniciar el nivel de alerta para la nueva lectura
+	  		    gas_current_level = ALERTA_GAS_NINGUNA;
+
+	  		    // 1. ALERTA CRÍTICA: TVOC EXTREMO O AQI EN NIVEL MÁXIMO (Riesgo Inminente)
+				if (ens160.tvoc >= UMBRAL_TVOC_CRITICO_MIN || ens160.aqi >= UMBRAL_AQI_CRITICO_MIN) {
+					gas_current_level = ALERTA_GAS_CRITICA;
+					snprintf((char*)tx.bytes, sizeof(tx.bytes), "ALERTA CRITICA: NIVELES TOXICOS\r\n");
+					HAL_UART_Transmit(&huart3, tx.bytes, strlen((char*)tx.bytes), 1000);
+					HAL_UART_Transmit(&huart2, tx.bytes, strlen((char*)tx.bytes), 1000);
+				}
+				// 2. ALERTA FUERTE: TVOC ALTO O AQI EN NIVEL 4 (Requiere Acción Rápida)
+				else if (ens160.tvoc >= UMBRAL_TVOC_FUERTE_MIN || ens160.aqi >= UMBRAL_AQI_FUERTE_MIN) {
+					gas_current_level = ALERTA_GAS_FUERTE;
+					snprintf((char*)tx.bytes, sizeof(tx.bytes), "ALERTA FUERTE: VENTILACION URGENTE\r\n");
+					HAL_UART_Transmit(&huart3, tx.bytes, strlen((char*)tx.bytes), 1000);
+					HAL_UART_Transmit(&huart2, tx.bytes, strlen((char*)tx.bytes), 1000);
+				}
+				// 3. ALERTA LEVE: AQI en 2 o 3 O CO2 ELEVADO (Requiere Ventilación General)
+				else if (ens160.aqi >= UMBRAL_AQI_LEVE_MIN || ens160.eco2 > 1000) {
+					gas_current_level = ALERTA_GAS_LEVE;
+					// Aquí combinamos el AQI bajo y la CO2 alta, que ambos sugieren "VENTILAR"
+					if (ens160.eco2 > 1000) {
+						snprintf((char*)tx.bytes, sizeof(tx.bytes), "ALERTA LEVE: CO2 ELEVADO\r\n");
+					} else {
+						snprintf((char*)tx.bytes, sizeof(tx.bytes), "ALERTA LEVE: VENTILAR\r\n");
+					}
+					HAL_UART_Transmit(&huart3, tx.bytes, strlen((char*)tx.bytes), 1000);
+					HAL_UART_Transmit(&huart2, tx.bytes, strlen((char*)tx.bytes), 1000);
+				}
+				// 4. CALIDAD BUENA
+				else {
+					gas_current_level = ALERTA_GAS_NINGUNA;
+					// snprintf((char*)tx.bytes, sizeof(tx.bytes), "CALIDAD AIRE BUENA\r\n");
+					HAL_UART_Transmit(&huart3, tx.bytes, strlen((char*)tx.bytes), 1000);
+					HAL_UART_Transmit(&huart2, tx.bytes, strlen((char*)tx.bytes), 1000);
+				}
+				// === FIN: NUEVA LÓGICA DE DETECCIÓN ===
+
+//	  		    // Detección de Alerta de Gas
+//                if (ens160.tvoc > 500 || ens160.eco2 > 1500) {
+//                    gas_detectado = true;
+//                    snprintf((char*)tx.bytes, sizeof(tx.bytes), "ALERTA de GAS: TVOC/eCO2 altos! (TVOC:%d, eCO2:%d)\r\n", ens160.tvoc, ens160.eco2);
+//                    HAL_UART_Transmit(&huart3, tx.bytes, strlen((char*)tx.bytes), 1000);
+//                } else {
+//                    gas_detectado = false;
+//                }
 
                 Send_USART(); // Enviar datos después de la lectura
 	  	    }
@@ -795,11 +986,21 @@ void StartSensadoCalidadAireTask(void *argument) {
              HAL_GPIO_TogglePin(LED_VERDE_GPIO_Port, LED_VERDE_Pin);
              osDelay(50);
         }
-        else if (gas_detectado) {
-             // Gas: Parpadeo LENTO (500 ms)
-             HAL_GPIO_TogglePin(LED_VERDE_GPIO_Port, LED_VERDE_Pin);
-             osDelay(500);
+        else if (gas_current_level == ALERTA_GAS_CRITICA) {
+        	// Gas Crítica: Parpadeo RÁPIDO/INTERMEDIO (100 ms)
+			 HAL_GPIO_TogglePin(LED_VERDE_GPIO_Port, LED_VERDE_Pin);
+			 osDelay(100);
         }
+        else if (gas_current_level == ALERTA_GAS_FUERTE) {
+        	// Gas Fuerte: Parpadeo MEDIO (250 ms)
+			 HAL_GPIO_TogglePin(LED_VERDE_GPIO_Port, LED_VERDE_Pin);
+			 osDelay(250);
+        }
+        else if (gas_current_level == ALERTA_GAS_LEVE) {
+        	// Gas Leve: Parpadeo LENTO (500 ms)
+			 HAL_GPIO_TogglePin(LED_VERDE_GPIO_Port, LED_VERDE_Pin);
+			 osDelay(500);
+		}
         else {
              // Ninguna Alerta: LED Apagado
              HAL_GPIO_WritePin(LED_VERDE_GPIO_Port, LED_VERDE_Pin, GPIO_PIN_RESET);

@@ -23,6 +23,7 @@
 /* USER CODE BEGIN Includes */
 #include "stdbool.h"
 #include "stdio.h"
+#include "string.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -87,6 +88,7 @@ Device_Config datos={};
 ADXL_Config acelerometro={};
 Values_ADXL values={};
 Transfer_Config tx={};
+Transfer_Config tx_debug={}; // Nuevo para mensajes internos
 
 void ADXL_Init(void);
 void Value_Conversion(void);
@@ -153,6 +155,26 @@ void Send_USART(void);
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+// En la sección de variables globales (después de las estructuras)
+static uint32_t timestamp_inicio_leve = 0;
+static uint32_t timestamp_inicio_fuerte = 0;
+static uint32_t timestamp_inicio_critico = 0;
+static uint32_t timestamp_ultima_deteccion_leve = 0;
+static uint32_t timestamp_ultima_deteccion_fuerte = 0;
+static uint32_t timestamp_ultima_deteccion_critico = 0;
+
+static uint8_t contador_leve = 0;
+static uint8_t contador_fuerte = 0;
+static uint8_t contador_critico = 0;
+
+
+//static bool alerta_leve_enviada = false;
+//static bool alerta_fuerte_enviada = false;
+//static bool alerta_critica_enviada = false;
+
+#define VENTANA_TIEMPO 2000        // 2 segundos en milisegundos
+#define DETECCIONES_MINIMAS 5      // Mínimo de detecciones en la ventana
+#define TIMEOUT_RESETEO 1000       // 1 segundo sin detecciones para resetear
 
 /* USER CODE END PD */
 
@@ -278,7 +300,7 @@ int main(void)
 		acelerometro.rawZ = (buffer[1] << 8 | buffer[0]);
 
 		Value_Conversion();
-		Send_USART();
+//		Send_USART();
 
 		datos.acelX_filtrada = filtroSuavizado(datos.x_axis, datos.acelX_filtrada);
 		datos.acelY_filtrada = filtroSuavizado(datos.y_axis, datos.acelY_filtrada);
@@ -294,29 +316,127 @@ int main(void)
 
 		// Magnitud lateral (evitar gravedad)
 		float magnitudLateral = sqrt(datos.deltaX*datos.deltaX + datos.deltaY*datos.deltaY);
+		uint32_t tiempo_actual = HAL_GetTick();
 
-		// Detección
+		// ==================== TEMBLOR LEVE ====================
 		if (magnitudLateral > 0.01 && magnitudLateral < 0.03) {
-			snprintf((char*)tx.bytes, sizeof(tx.bytes), "TEMBLOR LEVE DETECTADO\r\n");
-			HAL_UART_Transmit(&huart3, tx.bytes, strlen((char*)tx.bytes), 1000);
-			HAL_UART_Transmit(&huart2, tx.bytes, strlen((char*)tx.bytes), 1000);
+		    // Si es la primera detección, iniciar timestamp
+		    if (contador_leve == 0) {
+//		        snprintf((char*)tx.bytes, sizeof(tx.bytes), "Inicia contador leve\r\n");
+//		        HAL_UART_Transmit(&huart3, tx.bytes, strlen((char*)tx.bytes), 1000);
+		        timestamp_inicio_leve = tiempo_actual;
+		    }
 
+		    contador_leve++;
+		    timestamp_ultima_deteccion_leve = tiempo_actual;
+//		    snprintf((char*)tx.bytes, sizeof(tx.bytes), "+\r\n");
+//		    HAL_UART_Transmit(&huart3, tx.bytes, strlen((char*)tx.bytes), 1000);
 
+		    // Verificar si han pasado 2 segundos con suficientes detecciones
+		    if ((tiempo_actual - timestamp_inicio_leve) >= VENTANA_TIEMPO) {
+		        if (contador_leve >= DETECCIONES_MINIMAS) {
+		            snprintf((char*)tx.bytes, sizeof(tx.bytes), "TEMBLOR LEVE DETECTADO\r\n");
+//		            HAL_UART_Transmit(&huart3, tx.bytes, strlen((char*)tx.bytes), 1000);
+		            HAL_UART_Transmit(&huart2, tx.bytes, strlen((char*)tx.bytes), 1000);
+
+		            // RESETEAR después de enviar alerta para detectar cambios
+		            contador_leve = 0;
+		            timestamp_inicio_leve = 0;
+		        }
+		    }
 		}
 
-		else if (magnitudLateral >= 0.03 && magnitudLateral < 0.05) {
-			snprintf((char*)tx.bytes, sizeof(tx.bytes), "TEMBLOR FUERTE DETECTADO\r\n");
-			HAL_UART_Transmit(&huart3, tx.bytes, strlen((char*)tx.bytes), 1000);
-			HAL_UART_Transmit(&huart2, tx.bytes, strlen((char*)tx.bytes), 1000);
-
+		// Resetear solo si ha pasado MUCHO tiempo sin detección
+		if (contador_leve > 0 && (tiempo_actual - timestamp_ultima_deteccion_leve) > TIMEOUT_RESETEO) {
+		    snprintf((char*)tx.bytes, sizeof(tx.bytes), "Reseteo de contador\r");
+//		    HAL_UART_Transmit(&huart3, tx.bytes, strlen((char*)tx.bytes), 1000);
+		    contador_leve = 0;
+		    timestamp_inicio_leve = 0;
 		}
 
-		else if (magnitudLateral >= 0.5) {
-			snprintf((char*)tx.bytes, sizeof(tx.bytes), "ALERTA CRITICA: RIESGO ESTRUCTURAL\r\n");
-			HAL_UART_Transmit(&huart3, tx.bytes, strlen((char*)tx.bytes), 1000);
-			HAL_UART_Transmit(&huart2, tx.bytes, strlen((char*)tx.bytes), 1000);
+		// ==================== TEMBLOR FUERTE ====================
+		if (magnitudLateral >= 0.03 && magnitudLateral < 0.05) {
+		    if (contador_fuerte == 0) {
+		        snprintf((char*)tx.bytes, sizeof(tx.bytes), "Inicia contador fuerte\r\n");
+//		        HAL_UART_Transmit(&huart3, tx.bytes, strlen((char*)tx.bytes), 1000);
+		        timestamp_inicio_fuerte = tiempo_actual;
+		    }
 
+		    contador_fuerte++;
+		    timestamp_ultima_deteccion_fuerte = tiempo_actual;
+		    snprintf((char*)tx.bytes, sizeof(tx.bytes), "+\r\n");
+//		    HAL_UART_Transmit(&huart3, tx.bytes, strlen((char*)tx.bytes), 1000);
+
+		    if ((tiempo_actual - timestamp_inicio_fuerte) >= VENTANA_TIEMPO) {
+		        if (contador_fuerte >= DETECCIONES_MINIMAS) {
+		            snprintf((char*)tx.bytes, sizeof(tx.bytes), "TEMBLOR FUERTE DETECTADO\r\n");
+		            HAL_UART_Transmit(&huart3, tx.bytes, strlen((char*)tx.bytes), 1000);
+		            HAL_UART_Transmit(&huart2, tx.bytes, strlen((char*)tx.bytes), 1000);
+
+		            // RESETEAR después de enviar alerta
+		            contador_fuerte = 0;
+		            timestamp_inicio_fuerte = 0;
+		        }
+		    }
 		}
+
+		if (contador_fuerte > 0 && (tiempo_actual - timestamp_ultima_deteccion_fuerte) > TIMEOUT_RESETEO) {
+		    contador_fuerte = 0;
+		    timestamp_inicio_fuerte = 0;
+		}
+
+		// ==================== CRÍTICO ====================
+		if (magnitudLateral >= 0.65) {
+		    if (contador_critico == 0) {
+		        snprintf((char*)tx.bytes, sizeof(tx.bytes), "Inicia contador critico\r\n");
+//		        HAL_UART_Transmit(&huart3, tx.bytes, strlen((char*)tx.bytes), 1000);
+		        timestamp_inicio_critico = tiempo_actual;
+		    }
+
+		    contador_critico++;
+		    timestamp_ultima_deteccion_critico = tiempo_actual;
+		    snprintf((char*)tx.bytes, sizeof(tx.bytes), "+\r\n");
+//		    HAL_UART_Transmit(&huart3, tx.bytes, strlen((char*)tx.bytes), 1000);
+
+		    if ((tiempo_actual - timestamp_inicio_critico) >= VENTANA_TIEMPO) {
+		        if (contador_critico >= DETECCIONES_MINIMAS) {
+		            snprintf((char*)tx.bytes, sizeof(tx.bytes), "ALERTA CRITICA: RIESGO ESTRUCTURAL\r\n");
+		            HAL_UART_Transmit(&huart3, tx.bytes, strlen((char*)tx.bytes), 1000);
+		            HAL_UART_Transmit(&huart2, tx.bytes, strlen((char*)tx.bytes), 1000);
+
+		            // RESETEAR después de enviar alerta
+		            contador_critico = 0;
+		            timestamp_inicio_critico = 0;
+		        }
+		    }
+		}
+
+		if (contador_critico > 0 && (tiempo_actual - timestamp_ultima_deteccion_critico) > TIMEOUT_RESETEO) {
+		    contador_critico = 0;
+		    timestamp_inicio_critico = 0;
+		}
+//		// Detección
+//		if (magnitudLateral > 0.01 && magnitudLateral < 0.03) {
+//			snprintf((char*)tx.bytes, sizeof(tx.bytes), "TEMBLOR LEVE DETECTADO\r\n");
+//			HAL_UART_Transmit(&huart3, tx.bytes, strlen((char*)tx.bytes), 1000);
+//			HAL_UART_Transmit(&huart2, tx.bytes, strlen((char*)tx.bytes), 1000);
+//
+//
+//		}
+//
+//		else if (magnitudLateral >= 0.03 && magnitudLateral < 0.05) {
+//			snprintf((char*)tx.bytes, sizeof(tx.bytes), "TEMBLOR FUERTE DETECTADO\r\n");
+//			HAL_UART_Transmit(&huart3, tx.bytes, strlen((char*)tx.bytes), 1000);
+//			HAL_UART_Transmit(&huart2, tx.bytes, strlen((char*)tx.bytes), 1000);
+//
+//		}
+//
+//		else if (magnitudLateral >= 0.65) {
+//			snprintf((char*)tx.bytes, sizeof(tx.bytes), "ALERTA CRITICA: RIESGO ESTRUCTURAL\r\n");
+//			HAL_UART_Transmit(&huart3, tx.bytes, strlen((char*)tx.bytes), 1000);
+//			HAL_UART_Transmit(&huart2, tx.bytes, strlen((char*)tx.bytes), 1000);
+//
+//		}
 
 
 	  //------------CALIDAD DE AIRE--------------
@@ -344,36 +464,104 @@ int main(void)
 	  		  Read_ENS160_Data();
 	  		  Send_USART(); // Enviar datos por UART
 
-	  		  if(ens160.tvoc > 5300 && ens160.aqi >= 4){
-	  			snprintf((char*)tx.bytes, sizeof(tx.bytes), "ALERTA CRITICA: NIVELES TOXICOS\r\n");
-				HAL_UART_Transmit(&huart3, tx.bytes, strlen((char*)tx.bytes), 1000);
-				HAL_UART_Transmit(&huart2, tx.bytes, strlen((char*)tx.bytes), 1000);
+	  		  const float UMBRAL_TVOC_CRITICO_MIN = 10000.0;
+	  		  const int UMBRAL_AQI_CRITICO_MIN    = 5;
+	  		  const float UMBRAL_TVOC_FUERTE_MIN  = 5000.0;
+	  		  const int UMBRAL_AQI_FUERTE_MIN     = 4;
+	  		  const int UMBRAL_AQI_LEVE_MIN       = 2;
 
+	  		  // 1. ALERTA CRÍTICA: TVOC EXTREMO O AQI EN NIVEL MÁXIMO (Riesgo Inminente)
+	  		  if (ens160.tvoc >= UMBRAL_TVOC_CRITICO_MIN || ens160.aqi >= UMBRAL_AQI_CRITICO_MIN) {
+	  			  snprintf((char*)tx.bytes, sizeof(tx.bytes), "ALERTA CRITICA: NIVELES TOXICOS\r\n");
+	  			  HAL_UART_Transmit(&huart3, tx.bytes, strlen((char*)tx.bytes), 1000);
+	  			  HAL_UART_Transmit(&huart2, tx.bytes, strlen((char*)tx.bytes), 1000);
 	  		  }
-	  		  else if(ens160.tvoc > 1600 && ens160.aqi >= 3){
-	  			snprintf((char*)tx.bytes, sizeof(tx.bytes), "ADVERTENCIA VENTILAR\r\n");
-				HAL_UART_Transmit(&huart3, tx.bytes, strlen((char*)tx.bytes), 1000);
-				HAL_UART_Transmit(&huart2, tx.bytes, strlen((char*)tx.bytes), 1000);
+	  		  // 2. ALERTA FUERTE: TVOC ALTO O AQI EN NIVEL 4 (Requiere Acción Rápida)
+	  		  else if (ens160.tvoc >= UMBRAL_TVOC_FUERTE_MIN || ens160.aqi >= UMBRAL_AQI_FUERTE_MIN) {
+	  			  snprintf((char*)tx.bytes, sizeof(tx.bytes), "ALERTA FUERTE: VENTILACION URGENTE\r\n");
+	  			  HAL_UART_Transmit(&huart3, tx.bytes, strlen((char*)tx.bytes), 1000);
+				  HAL_UART_Transmit(&huart2, tx.bytes, strlen((char*)tx.bytes), 1000);
+	  		  }
+	  		  // 3. ALERTA LEVE: AQI en 2 o 3 O CO2 ELEVADO (Requiere Ventilación General)
+	  		  else if (ens160.aqi >= UMBRAL_AQI_LEVE_MIN || ens160.eco2 > 1000) {
+	  			  // Aquí combinamos el AQI bajo y la CO2 alta, que ambos sugieren "VENTILAR"
+	  			  if (ens160.eco2 > 1000) {
+	  				  snprintf((char*)tx.bytes, sizeof(tx.bytes), "ALERTA LEVE: CO2 ELEVADO\r\n");
+	  			  } else {
+	  				  snprintf((char*)tx.bytes, sizeof(tx.bytes), "ALERTA LEVE: VENTILAR\r\n");
+	  			  }
+	  			  HAL_UART_Transmit(&huart3, tx.bytes, strlen((char*)tx.bytes), 1000);
+	  			  HAL_UART_Transmit(&huart2, tx.bytes, strlen((char*)tx.bytes), 1000);
+	  		  }
+	  		  // 4. CALIDAD BUENA
+	  		  else {
+	  			  // snprintf((char*)tx.bytes, sizeof(tx.bytes), "CALIDAD AIRE BUENA\r\n");
+	  			  HAL_UART_Transmit(&huart3, tx.bytes, strlen((char*)tx.bytes), 1000);
+	  			  HAL_UART_Transmit(&huart2, tx.bytes, strlen((char*)tx.bytes), 1000);
+	  		  }
 
-	  		  }
-	  		  else if(ens160.tvoc > 530 && ens160.aqi >= 2){
-	  			snprintf((char*)tx.bytes, sizeof(tx.bytes), "VENTILAR\r\n");
-				HAL_UART_Transmit(&huart3, tx.bytes, strlen((char*)tx.bytes), 1000);
-				HAL_UART_Transmit(&huart2, tx.bytes, strlen((char*)tx.bytes), 1000);
+//	  		  // 1. ALERTA CRÍTICA: TVOC EXTREMO O EL PEOR AQI
+//	  		  if (ens160.tvoc >= UMBRAL_TVOC_CRITICO_MIN || ens160.aqi >= UMBRAL_AQI_CRITICO_MIN) {
+//	  			  snprintf((char*)tx.bytes, sizeof(tx.bytes), "ALERTA CRITICA: NIVELES TOXICOS\r\n");
+//	  			  HAL_UART_Transmit(&huart3, tx.bytes, strlen((char*)tx.bytes), 1000);
+//	  			  HAL_UART_Transmit(&huart2, tx.bytes, strlen((char*)tx.bytes), 1000);
+//	  		  }
+//	  		  // 2. ALERTA FUERTE: TVOC ALTO O AQI EN NIVEL 4
+//	  		  else if (ens160.tvoc >= UMBRAL_TVOC_FUERTE_MIN || ens160.aqi >= UMBRAL_AQI_FUERTE_MIN) {
+//	  			  snprintf((char*)tx.bytes, sizeof(tx.bytes), "ADVERTENCIA VENTILAR\r\n");
+//	  			  HAL_UART_Transmit(&huart3, tx.bytes, strlen((char*)tx.bytes), 1000);
+//	  			  HAL_UART_Transmit(&huart2, tx.bytes, strlen((char*)tx.bytes), 1000);
+//	  		  }
+//	  		  // 3. ALERTA LEVE: AQI en 2 o 3 (Primeros signos de mala ventilación)
+//	  		  else if (ens160.aqi >= UMBRAL_AQI_LEVE_MIN) {
+//	  			  snprintf((char*)tx.bytes, sizeof(tx.bytes), "VENTILAR\r\n");
+//	  			  HAL_UART_Transmit(&huart3, tx.bytes, strlen((char*)tx.bytes), 1000);
+//	  			  HAL_UART_Transmit(&huart2, tx.bytes, strlen((char*)tx.bytes), 1000);
+//	  		  }
+//	  		  // 4. ALERTA CO2 (Independiente de los COVs)
+//	  		  else if (ens160.eco2 > 1000) {
+//	  			  snprintf((char*)tx.bytes, sizeof(tx.bytes), "CO2 ELEVADO\r\n");
+//	  			  HAL_UART_Transmit(&huart3, tx.bytes, strlen((char*)tx.bytes), 1000);
+//	  			  HAL_UART_Transmit(&huart2, tx.bytes, strlen((char*)tx.bytes), 1000);
+//	  		  }
+//	  		  else{
+//	  			  //	snprintf((char*)tx.bytes, sizeof(tx.bytes), "CALIDAD AIRE BUENA\r\n");
+//	  			  HAL_UART_Transmit(&huart3, tx.bytes, strlen((char*)tx.bytes), 1000);
+//	  			  HAL_UART_Transmit(&huart2, tx.bytes, strlen((char*)tx.bytes), 1000);
+//	  		  }
 
-	  		  }
-	  		  else if(ens160.eco2>1000){
-	  			snprintf((char*)tx.bytes, sizeof(tx.bytes), "CO2 ELEVADO\r\n");
-				HAL_UART_Transmit(&huart3, tx.bytes, strlen((char*)tx.bytes), 1000);
-				HAL_UART_Transmit(&huart2, tx.bytes, strlen((char*)tx.bytes), 1000);
+//	  		 ------------ ANTERIOR-----------------
 
-	  		  }
-	  		  else{
-	  			snprintf((char*)tx.bytes, sizeof(tx.bytes), "CALIDAD AIRE BUENA\r\n");
-				HAL_UART_Transmit(&huart3, tx.bytes, strlen((char*)tx.bytes), 1000);
-				HAL_UART_Transmit(&huart2, tx.bytes, strlen((char*)tx.bytes), 1000);
-
-	  		  }
+//	  		  if(ens160.tvoc > 5300 && ens160.aqi >= 4){
+//	  			snprintf((char*)tx.bytes, sizeof(tx.bytes), "ALERTA CRITICA: NIVELES TOXICOS\r\n");
+//				HAL_UART_Transmit(&huart3, tx.bytes, strlen((char*)tx.bytes), 1000);
+//				HAL_UART_Transmit(&huart2, tx.bytes, strlen((char*)tx.bytes), 1000);
+//
+//	  		  }
+//	  		  else if(ens160.tvoc > 1600 && ens160.aqi >= 3){
+//	  			snprintf((char*)tx.bytes, sizeof(tx.bytes), "ADVERTENCIA VENTILAR\r\n");
+//				HAL_UART_Transmit(&huart3, tx.bytes, strlen((char*)tx.bytes), 1000);
+//				HAL_UART_Transmit(&huart2, tx.bytes, strlen((char*)tx.bytes), 1000);
+//
+//	  		  }
+//	  		  else if(ens160.tvoc > 530 && ens160.aqi >= 2){
+//	  			snprintf((char*)tx.bytes, sizeof(tx.bytes), "VENTILAR\r\n");
+//				HAL_UART_Transmit(&huart3, tx.bytes, strlen((char*)tx.bytes), 1000);
+//				HAL_UART_Transmit(&huart2, tx.bytes, strlen((char*)tx.bytes), 1000);
+//
+//	  		  }
+//	  		  else if(ens160.eco2>1000){
+//	  			snprintf((char*)tx.bytes, sizeof(tx.bytes), "CO2 ELEVADO\r\n");
+//				HAL_UART_Transmit(&huart3, tx.bytes, strlen((char*)tx.bytes), 1000);
+//				HAL_UART_Transmit(&huart2, tx.bytes, strlen((char*)tx.bytes), 1000);
+//
+//	  		  }
+//	  		  else{
+////	  			snprintf((char*)tx.bytes, sizeof(tx.bytes), "CALIDAD AIRE BUENA\r\n");
+//				HAL_UART_Transmit(&huart3, tx.bytes, strlen((char*)tx.bytes), 1000);
+//				HAL_UART_Transmit(&huart2, tx.bytes, strlen((char*)tx.bytes), 1000);
+//
+//	  		  }
 
 	  		  ens160.dataReady1 = false; // Opcional: limpiar bandera para esperar próxima lectura
 
