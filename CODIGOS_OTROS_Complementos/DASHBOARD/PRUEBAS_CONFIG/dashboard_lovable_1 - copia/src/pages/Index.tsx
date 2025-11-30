@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { TvocLevelMeter } from "@/components/Dashboard/TvocLeverMeter";
 import { useToast } from "@/components/ui/use-toast"; // <-- ¡Añadir esto!
 
+
 // --- Constantes de Conexión MQTT ---
 const MQTT_BROKER_URL = 'ws://broker.hivemq.com:8000/mqtt'; 
 
@@ -432,27 +433,7 @@ const Index = () => {
     };
   }, []);
 
-  // 🔴 BLOQUE DE SIMULACIÓN DE ESTADO ELIMINADO.
-  // Ahora solo las alertas son gestionadas por el systemState (si lo necesitas).
-  useEffect(() => {
-    if (systemState === "normal") {
 
-      setAlerts([
-        { id: Date.now(), type: "system", message: "Sistema funcionando normalmente", timestamp: new Date(), severity: "info" },
-      ]);
-    } else if (systemState === "alert") {
-
-      setAlerts([
-        { id: Date.now(), type: "gas", message: "Nivel de CO2 (ECO2) elevado - Revisar nodos", timestamp: new Date(), severity: "warning" },
-      ]);
-    } else if (systemState === "critical") {
-
-      setAlerts([
-        { id: Date.now(), type: "gas", message: "¡CRÍTICO! Múltiples sensores detectando niveles peligrosos", timestamp: new Date(), severity: "critical" },
-        { id: Date.now() + 1, type: "vibration", message: "Vibración fuerte detectada - Posible sismo/impacto", timestamp: new Date(Date.now() - 15000), severity: "critical" },
-      ]);
-    }
-  }, [systemState]);
 
   // Las funciones de estado para las MetricCards usan el promedio global de ECO2 y TVOC de MQTT
   const getVibrationIntensity = (): "leve" | "moderada" | "fuerte" => {
@@ -504,6 +485,29 @@ const Index = () => {
             Estado Crítico
           </Button>
         </div>
+
+        {/* <div className="flex justify-between items-center bg-gray-50 dark:bg-gray-800 p-4 rounded-lg shadow-md border border-gray-200 dark:border-gray-700">
+          <h1 className="text-2xl font-semibold text-foreground dark:text-white flex items-center">
+            RESQNET: Monitoreo del Sistema
+          </h1>
+          
+        
+          <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full font-semibold text-sm transition-colors duration-300
+            ${systemState === "normal" ? "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300" :
+              systemState === "alert" ? "bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300" :
+              "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300"
+            }`}
+          >
+            <div className={`w-3 h-3 rounded-full 
+              ${systemState === "normal" ? "bg-green-500" :
+                systemState === "alert" ? "bg-yellow-500" :
+                "bg-red-500"
+              }`}
+            />
+            Estado: {systemState === "normal" ? "Operación Normal" : systemState === "alert" ? "Alerta Leve" : "CRÍTICO"}
+          </div>
+        </div> */}
+
         {/* Quick Metrics */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
 
@@ -542,7 +546,7 @@ const Index = () => {
             title="Personas en Salón"
             value={peopleCount}
             icon={Users}
-            status="normal"
+            status="info"
           />
           
           {/* 🟢 NUEVO: METRIC CARD DE TVOC */}

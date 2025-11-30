@@ -6,7 +6,7 @@ interface MetricCardProps {
   value: string | number;
   unit?: string;
   icon: LucideIcon;
-  status?: "normal" | "warning" | "critical" | "alert";
+  status?: "normal" | "warning" | "critical" | "alert" | "info";
   subtitle?: string;
 }
 
@@ -16,6 +16,7 @@ export const MetricCard = ({ title, value, unit, icon: Icon, status = "normal", 
     warning: "text-warning", 
     alert: "text-alert", // 🎯 Usar la nueva clase 'text-alert'
     critical: "text-destructive", 
+    info: "text-primary"
   };
 
   const bgColors = {
@@ -23,6 +24,7 @@ export const MetricCard = ({ title, value, unit, icon: Icon, status = "normal", 
     warning: "bg-warning/20", 
     alert: "bg-alert/20", // 🎯 Usar la nueva clase 'bg-alert/20'
     critical: "bg-destructive/20",
+    info: "bg-primary/20"
   };
 
   const iconColorClass = statusColors[status as keyof typeof statusColors];
