@@ -15,9 +15,10 @@ const char* mqtt_client_id = "ESP01S_Resqnet_Router_Client";
 const char* T_NODO = "resqnet/nodo";
 const char* T_AIRE = "resqnet/aire";
 const char* T_ACELEROMETRO = "resqnet/acelerometro";
-const char* T_ALERTAS = "resqnet/alertas";
+const char* T_ALERTAS_NODOS = "resqnet/alertas_nodos";  // Alertas INDIVIDUALES
+const char* T_ALERTAS = "resqnet/alertas";              // Alertas COMUNES
 
-const char* TOPICS[] = {T_NODO, T_AIRE, T_ACELEROMETRO, T_ALERTAS};
+const char* TOPICS[] = {T_NODO, T_AIRE, T_ACELEROMETRO, T_ALERTAS_NODOS, T_ALERTAS};
 const int NUM_TOPICS = sizeof(TOPICS) / sizeof(TOPICS[0]);
 
 WiFiClient espClient;
@@ -98,19 +99,23 @@ String extractNodeName(String data) {
 }
 
 String extractNodeNumberFromAlert(String data) {
-    // El número del nodo siempre está en la posición 13
-    // "ALERTA NODO #:" → posición 13 es el #
-    if (data.length() > 13) {
-        return String(data.charAt(13));
+    // "🚨 ALERTA NODO #:" → extraer el número después de "NODO "
+    int nodoIdx = data.indexOf("NODO ");
+    if (nodoIdx == -1) return "";
+    
+    nodoIdx += 5; // Avanzar después de "NODO "
+    
+    // Buscar el siguiente carácter que sea un dígito
+    for (int i = nodoIdx; i < data.length(); i++) {
+        if (isdigit(data.charAt(i))) {
+            return String(data.charAt(i));
+        }
     }
     return "";
 }
 
-
-
-
 String extractAlertMessage(String data) {
-    int colonIdx = data.indexOf(":");
+    int colonIdx = data.lastIndexOf(":"); // Último ":" para capturar el mensaje
     if (colonIdx == -1) return "";
     
     String alertMsg = data.substring(colonIdx + 1);
@@ -121,8 +126,51 @@ String extractAlertMessage(String data) {
     return alertMsg;
 }
 
-bool isAlert(String data) {
+bool isAlertaNodo(String data) {
     return data.indexOf("ALERTA NODO") != -1;
+}
+
+bool isAlertaComun(String data) {
+    return (data.indexOf("ALERTA_GENERAL") != -1 || 
+            data.indexOf("ALERTA COMÚN") != -1);
+}
+
+// ============================================================
+// PROCESAR ALERTAS INDIVIDUALES (NODO)
+// ============================================================
+void process_alerta_nodo(String data) {
+    Serial.println("[ALERTA NODO] Detectada alerta individual");
+    alertaActiva = true;
+    
+    String nodoNum = extractNodeNumberFromAlert(data);
+    String alertMessage = extractAlertMessage(data);
+    
+    // PUBLICAR SOLO EN ALERTAS_NODOS (individual del nodo)
+    StaticJsonDocument<256> doc_alertas_nodos;
+    char payload_alertas_nodos[256];
+    
+    doc_alertas_nodos["tipo_evento"] = alertMessage;
+    doc_alertas_nodos["nodo"] = nodoNum.toInt();
+    serializeJson(doc_alertas_nodos, payload_alertas_nodos);
+    publish_json(T_ALERTAS_NODOS, payload_alertas_nodos);
+}
+
+// ============================================================
+// PROCESAR ALERTAS COMUNES
+// ============================================================
+void process_alerta_comun(String data) {
+    Serial.println("[ALERTA COMÚN] Detectada alerta general");
+    alertaActiva = true;
+    
+    String alertMessage = extractAlertMessage(data);
+    
+    // PUBLICAR SOLO EN ALERTAS (general/común)
+    StaticJsonDocument<128> doc_alertas;
+    char payload_alertas[128];
+    
+    doc_alertas["evento"] = alertMessage;
+    serializeJson(doc_alertas, payload_alertas);
+    publish_json(T_ALERTAS, payload_alertas);
 }
 
 // ============================================================
@@ -134,29 +182,22 @@ void process_uart_data() {
         incomingData += inChar;
 
         if (inChar == '\n') {
-            Serial.println("[INFO] Datos UART recibido. Parsing...");
             
-            // DETECTAR Y PROCESAR ALERTAS
-            if (isAlert(incomingData)) {
-                Serial.println("[ALERTA] Detectada alerta en UART");
-                alertaActiva = true;
-                
-                String nodoNum = extractNodeNumberFromAlert(incomingData);
-                String alertMessage = extractAlertMessage(incomingData);
-                
-                StaticJsonDocument<256> doc_alert;
-                char payload_alert[256];
-                
-                doc_alert["tipo_evento"] = alertMessage;
-                doc_alert["nodo"] = nodoNum.toInt();
-                serializeJson(doc_alert, payload_alert);
-                publish_json(T_ALERTAS, payload_alert);
-                
+            // 1️⃣ DETECTAR Y PROCESAR ALERTAS COMUNES
+            if (isAlertaComun(incomingData)) {
+                process_alerta_comun(incomingData);
                 incomingData = "";
                 return;
             }
             
-            // PROCESAR DATOS DE SENSORES SOLO SI NO HAY ALERTA
+            // 2️⃣ DETECTAR Y PROCESAR ALERTAS INDIVIDUALES DE NODOS
+            if (isAlertaNodo(incomingData)) {
+                process_alerta_nodo(incomingData);
+                incomingData = "";
+                return;
+            }
+            
+            // 3️⃣ PROCESAR DATOS DE SENSORES SOLO SI NO HAY ALERTA
             if (!alertaActiva) {
                 String nodo_label = extractNodeName(incomingData);
                 float acel_x = extractValue(incomingData, "X").toFloat();
@@ -203,7 +244,6 @@ void process_uart_data() {
                 serializeJson(doc_out, payload_out);
                 publish_json(T_ACELEROMETRO, payload_out);
             } else {
-                Serial.println("[INFO] Alerta activa - datos de sensores ignorados");
                 alertaActiva = false; // Resetear flag después de un ciclo
             }
 
