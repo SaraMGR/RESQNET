@@ -22,6 +22,7 @@ const MQTT_TOPIC_ACCEL = 'resqnet/acelerometro';
 const MQTT_TOPIC_AIR = 'resqnet/aire';
 const MQTT_TOPIC_NODE_ALERTS = 'resqnet/alertas_nodos'; 
 const MQTT_TOPIC_GENERAL_ALERTS = 'resqnet/alertas';
+const MQTT_TOPIC_FINGERPRINT_ACCESS = 'resqnet/huella'; // <-- NUEVO TÓPICO
 
 // const MQTT_TOPIC_ACCEL = 'proyecto/acelerometro';
 // const MQTT_TOPIC_AIR = 'proyecto/aire';
@@ -53,6 +54,21 @@ interface DataAire {
 interface DataAlertaNodo {
    tipo_evento: string;
    nodo_id: number;
+}
+
+// 🟢 NUEVA INTERFAZ PARA PAYLOAD DE HUELLA
+interface DataHuella {
+    personas_activas: number;
+    id_usuario: number;
+    estado: "IN" | "OUT";
+}
+
+interface AccessRecord {
+  id: number; // Usaremos id_usuario como id
+  name: string; // Nombre o ID de usuario
+  entryTime: Date;
+  exitTime: Date | null;
+  status: "inside" | "outside";
 }
 
 type SystemState = "normal" | "alert" | "critical";
@@ -96,7 +112,11 @@ const Index = () => {
   const [vibrationValue, setVibrationValue] = useState(0);
   const [temperature, setTemperature] = useState(20);
   const [humidity, setHumidity] = useState(20);
-  const [peopleCount] = useState(8); // Usamos peopleCount como constante/simulado por ahora
+  const [peopleCount, setPeopleCount] = useState(0); // <-- Inicializamos con el número simulado inicial
+  // Cambiamos el estado de accessRecords a un array vacío para llenarlo dinámicamente
+  const [accessRecords, setAccessRecords] = useState<AccessRecord[]>([]);
+  // 💡 NUEVO ESTADO: Para saber qué IDs están actualmente DENTRO y evitar duplicar entradas.
+  const [activeUsers, setActiveUsers] = useState<Map<number, AccessRecord>>(new Map());
 
   // 🟢 ESTADO DE SENSORES: Valores iniciales para que los nodos aparezcan en el mapa
   const [sensors, setSensors] = useState<Array<{
@@ -134,11 +154,11 @@ const Index = () => {
     },
   ]);
 
-  const [accessRecords] = useState([
-    { id: 1, name: "Dr. García Martínez", entryTime: new Date(Date.now() - 7200000), exitTime: null, status: "inside" as const },
-    { id: 2, name: "Ing. Ana López", entryTime: new Date(Date.now() - 6900000), exitTime: null, status: "inside" as const },
+  // const [accessRecords] = useState([
+  //   { id: 1, name: "Dr. García Martínez", entryTime: new Date(Date.now() - 7200000), exitTime: null, status: "inside" as const },
+  //   { id: 2, name: "Ing. Ana López", entryTime: new Date(Date.now() - 6900000), exitTime: null, status: "inside" as const },
 
-  ]);
+  // ]);
 
   const [trendData, setTrendData] = useState([
     { time: "10:00", gas: 400, vibration: 0.0 },
@@ -152,9 +172,9 @@ const Index = () => {
       console.log('✅ Conectado a MQTT. Suscribiendo a acelerómetro y aire...');
       client.subscribe(MQTT_TOPIC_ACCEL, (err) => { if (err) console.error("Error al suscribirse a Acelerómetro:", err); });
       client.subscribe(MQTT_TOPIC_AIR, (err) => { if (err) console.error("Error al suscribirse a Aire:", err); });
-      // 🟢 NUEVA SUSCRIPCIÓN
       client.subscribe(MQTT_TOPIC_NODE_ALERTS, (err) => { if (err) console.error("Error al suscribirse a Alertas de Nodos:", err); });
       client.subscribe(MQTT_TOPIC_GENERAL_ALERTS, (err) => { if (err) console.error("Error al suscribirse a Alertas Generales:", err); });
+      client.subscribe(MQTT_TOPIC_FINGERPRINT_ACCESS, (err) => { if (err) console.error("Error al suscribirse a Huella:", err); }); // <-- NUEVA SUSCRIPCIÓN
     });
 
     client.on('message', (topic, message) => {
@@ -345,6 +365,57 @@ const Index = () => {
                 ...prev.slice(0, 9), 
             ]);
 
+          } else if (topic === MQTT_TOPIC_FINGERPRINT_ACCESS) {
+              const huellaPayload: DataHuella = payload;
+              const { id_usuario, estado, personas_activas } = huellaPayload;
+              const now = new Date();
+
+              console.log(`[HUELLA] Usuario: ${id_usuario}, Estado: ${estado}, Total Activas: ${personas_activas}`); // 👈 AÑADE ESTO
+
+              // 1. Actualizar el conteo total de personas en el salón
+              setPeopleCount(personas_activas);
+
+              // 2. Actualizar el registro de acceso
+              setActiveUsers(prevActiveUsers => {
+                  const newActiveUsers = new Map(prevActiveUsers);
+                  const currentRecord = newActiveUsers.get(id_usuario);
+                  
+                  // Nombre temporal: Usamos el ID del usuario
+                  const userName = `Usuario ${id_usuario}`;
+
+                  if (estado === "IN") {
+                      // Entrada: Crear un nuevo registro
+                      if (!currentRecord || currentRecord.status === "outside") {
+                          const newRecord: AccessRecord = {
+                              id: id_usuario,
+                              name: userName,
+                              entryTime: now,
+                              exitTime: null,
+                              status: "inside",
+                          };
+                          newActiveUsers.set(id_usuario, newRecord);
+                          
+                          // Añadir el nuevo registro al listado visible (al inicio)
+                          setAccessRecords(prevRecords => [newRecord, ...prevRecords.slice(0, 9)]);
+                      }
+                  } else if (estado === "OUT") {
+                      // Salida: Actualizar el registro activo
+                      if (currentRecord && currentRecord.status === "inside") {
+                          const updatedRecord = { 
+                              ...currentRecord, 
+                              exitTime: now, 
+                              status: "outside" as const,
+                          };
+                          newActiveUsers.set(id_usuario, updatedRecord);
+
+                          // Actualizar el registro visible en la lista
+                          setAccessRecords(prevRecords => 
+                              prevRecords.map(rec => (rec.id === id_usuario && rec.exitTime === null) ? updatedRecord : rec)
+                          );
+                      }
+                  }
+                  return newActiveUsers;
+              });
           }
 
       } catch (e) {
