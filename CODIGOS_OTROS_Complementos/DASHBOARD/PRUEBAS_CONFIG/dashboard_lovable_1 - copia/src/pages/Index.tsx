@@ -9,45 +9,113 @@ import { RoomMap } from "@/components/Dashboard/RoomMap";
 import { AlertsList } from "@/components/Dashboard/AlertsList";
 import { AccessLog } from "@/components/Dashboard/AccessLog";
 import { TrendCharts } from "@/components/Dashboard/TrendCharts";
-import { Users, Clock, ThermometerSun } from "lucide-react";
+import { Users, Clock, ThermometerSun, Zap, Activity, CloudAlert, Wind, Droplets } from "lucide-react"; // Añadimos Activity para ECO2/Gas
 import { Button } from "@/components/ui/button";
+import { TvocLevelMeter } from "@/components/Dashboard/TvocLeverMeter";
+import { useToast } from "@/components/ui/use-toast"; // <-- ¡Añadir esto!
 
 // --- Constantes de Conexión MQTT ---
 const MQTT_BROKER_URL = 'ws://broker.hivemq.com:8000/mqtt'; 
-// Nuevo tópico que usará el ESP32 para enviar AMBOS datos
-const MQTT_TOPIC_DATA = 'sensores/data_completa';
 
-// Tipo de dato que esperamos del ESP32
-interface SensorPayload {
-    gas_promedio: number;
-    vibration_promedio: number; 
+// TÓPICOS RESQNET MQTT
+const MQTT_TOPIC_ACCEL = 'resqnet/acelerometro';
+const MQTT_TOPIC_AIR = 'resqnet/aire';
+const MQTT_TOPIC_NODE_ALERTS = 'resqnet/alertas_nodos'; 
+const MQTT_TOPIC_GENERAL_ALERTS = 'resqnet/alertas';
+
+// const MQTT_TOPIC_ACCEL = 'proyecto/acelerometro';
+// const MQTT_TOPIC_AIR = 'proyecto/aire';
+
+// const MQTT_TOPIC_NODE_ALERTS = 'proyecto/alertas_nodos'; 
+// const MQTT_TOPIC_GENERAL_ALERTS = 'proyecto/alertas';
+
+
+// --- NUEVOS TIPOS DE PAYLOADS ---
+interface DataAcelerometro {
+  nodo_id: number;
+  x: number;
+  y: number;
+  z: number;
+  prom_xy: number;
+}
+
+interface DataAire {
+  nodo_id: number;
+  temperatura: number;
+  humedad: number;
+  aqi: number;
+  tvoc: number;
+  eco2: number;
+  prom_eco2: number;
+}
+
+// 🟢 NUEVA INTERFAZ PARA ALERTAS DE NODO
+interface DataAlertaNodo {
+   tipo_evento: string;
+   nodo_id: number;
 }
 
 type SystemState = "normal" | "alert" | "critical";
+type SensorStatus = "normal" | "warning" | "alert" | "critical";
+type AlertType = "gas" | "vibration" | "access" | "system" | "generalAlert";
+type AlertSeverity = "info" | "alert" | "warning" | "critical";
+
+const determineSensorStatus = (eco2: number, tvoc: number): SensorStatus => {
+    let status: SensorStatus = "normal";
+
+    // 1. Evaluación de eCO2
+    if (eco2 > 2000) {
+        status = "critical";
+    } else if (eco2 > 1000) {
+        status = "alert";
+    } else if (eco2 > 800) {
+        status = "warning";
+    }
+
+    // 2. Evaluación de TVOC (Sobrescribe si es más crítico)
+    if (tvoc > 600) {
+        status = "critical";
+    } else if (tvoc > 300 && status !== "critical") {
+        status = "alert";
+    } else if (tvoc > 100 && status !== "critical" && status !== "alert") {
+        status = "warning";
+    }
+    
+    return status;
+};
 
 const Index = () => {
+  const { toast } = useToast();
   const [systemState, setSystemState] = useState<SystemState>("normal");
-  const [gasLevel, setGasLevel] = useState(250);
-  const [vibrationValue, setVibrationValue] = useState(0.5);
-  const [temperature, setTemperature] = useState(22);
-  const [peopleCount, setPeopleCount] = useState(8);
+  const [eco2Level, setEco2Level] = useState(400); // Base eCO2
+  const [tvocLevel, setTvocLevel] = useState(0);
+  const [aqiLevel, setAqiLevel] = useState(0);
+  const [xValue, setXValue] = useState(0);
+  const [yValue, setYValue] = useState(0);
+  const [zValue, setZValue] = useState(0);
+  const [vibrationValue, setVibrationValue] = useState(0);
+  const [temperature, setTemperature] = useState(20);
+  const [humidity, setHumidity] = useState(20);
+  const [peopleCount] = useState(8); // Usamos peopleCount como constante/simulado por ahora
 
-  type SensorStatus = "normal" | "warning" | "alert";
-  type AlertType = "gas" | "vibration" | "access" | "system";
-  type AlertSeverity = "info" | "warning" | "critical";
-
+  // 🟢 ESTADO DE SENSORES: Valores iniciales para que los nodos aparezcan en el mapa
   const [sensors, setSensors] = useState<Array<{
     id: number;
     x: number;
     y: number;
+    z: number;
     status: SensorStatus;
-    gasLevel: number;
+    gasLevel: number; // eCO2 del nodo
+    tvocLevel: number; // TVOC
+    temperatura: number;
+    humedad: number;
+    aqi: number;
+    prom_eco2: number;
+    prom_xy: number;
   }>>([
-    { id: 1, x: 25, y: 30, status: "normal", gasLevel: 180 },
-    { id: 2, x: 50, y: 35, status: "normal", gasLevel: 220 },
-    { id: 3, x: 75, y: 30, status: "normal", gasLevel: 190 },
-    { id: 4, x: 25, y: 70, status: "normal", gasLevel: 240 },
-    { id: 5, x: 75, y: 70, status: "normal", gasLevel: 210 },
+    { id: 1, x: 25, y: 30, z: 0, status: "normal", gasLevel: 400, tvocLevel: 0, temperatura: 0, humedad: 0, aqi: 0, prom_eco2: 400, prom_xy: 0},
+    { id: 2, x: 25, y: 30, z: 0, status: "normal", gasLevel: 400, tvocLevel: 0, temperatura: 0, humedad: 0, aqi: 0, prom_eco2: 400, prom_xy: 0},
+    { id: 3, x: 25, y: 30, z: 0, status: "normal", gasLevel: 400, tvocLevel: 0, temperatura: 0, humedad: 0, aqi: 0, prom_eco2: 400, prom_xy: 0},
   ]);
 
   const [alerts, setAlerts] = useState<Array<{
@@ -69,65 +137,218 @@ const Index = () => {
   const [accessRecords] = useState([
     { id: 1, name: "Dr. García Martínez", entryTime: new Date(Date.now() - 7200000), exitTime: null, status: "inside" as const },
     { id: 2, name: "Ing. Ana López", entryTime: new Date(Date.now() - 6900000), exitTime: null, status: "inside" as const },
-    { id: 3, name: "Prof. Carlos Ruiz", entryTime: new Date(Date.now() - 5400000), exitTime: new Date(Date.now() - 1800000), status: "outside" as const },
-    { id: 4, name: "Téc. María Torres", entryTime: new Date(Date.now() - 4500000), exitTime: null, status: "inside" as const },
+
   ]);
 
   const [trendData, setTrendData] = useState([
-    { time: "10:00", gas: 200, vibration: 0.3 },
-    { time: "10:15", gas: 220, vibration: 0.4 },
-    { time: "10:30", gas: 210, vibration: 0.5 },
-    { time: "10:45", gas: 240, vibration: 0.6 },
-    { time: "11:00", gas: 250, vibration: 0.5 },
+    { time: "10:00", gas: 400, vibration: 0.0 },
   ]);
 
-// --- 3. Lógica de Conexión y Suscripción MQTT ---
+  // --- Lógica de Conexión y Suscripción MQTT con Múltiples Tópicos ---
   useEffect(() => {
     const client = mqtt.connect(MQTT_BROKER_URL);
 
     client.on('connect', () => {
-      console.log('✅ Conectado a MQTT. Suscribiendo a datos completos...');
-      // (Ya corregimos el error de sintaxis en el prompt anterior)
-      client.subscribe(MQTT_TOPIC_DATA, (err) => { 
-        if (err) {
-          console.error("Error al suscribirse:", err);
-        }
-      });
+      console.log('✅ Conectado a MQTT. Suscribiendo a acelerómetro y aire...');
+      client.subscribe(MQTT_TOPIC_ACCEL, (err) => { if (err) console.error("Error al suscribirse a Acelerómetro:", err); });
+      client.subscribe(MQTT_TOPIC_AIR, (err) => { if (err) console.error("Error al suscribirse a Aire:", err); });
+      // 🟢 NUEVA SUSCRIPCIÓN
+      client.subscribe(MQTT_TOPIC_NODE_ALERTS, (err) => { if (err) console.error("Error al suscribirse a Alertas de Nodos:", err); });
+      client.subscribe(MQTT_TOPIC_GENERAL_ALERTS, (err) => { if (err) console.error("Error al suscribirse a Alertas Generales:", err); });
     });
 
     client.on('message', (topic, message) => {
-      if (topic === MQTT_TOPIC_DATA) {
-        try {
-          // El payload ahora tiene el tipo SensorPayload: { gas_promedio: number; vibration_promedio: number; }
-          const payload: SensorPayload = JSON.parse(message.toString());
-
-          // 1. Extraemos y actualizamos el valor de GAS
-          const newGasLevel = parseFloat(payload.gas_promedio.toString()); 
-          if (!isNaN(newGasLevel)) {
-            setGasLevel(Math.round(newGasLevel)); 
-          }
-
-          // 2. 🟢 ¡CORRECCIÓN CLAVE! Extraemos y actualizamos el valor de VIBRACIÓN
-          const newVibration = parseFloat(payload.vibration_promedio.toString());
-          if (!isNaN(newVibration)) {
-              // Redondeamos a 2 decimales para la visualización
-              setVibrationValue(Number(newVibration.toFixed(2))); 
-          }
+      try {
+          const payload = JSON.parse(message.toString());
           
-          // 3. 🟢 Actualizar la gráfica de tendencia (TrendCharts) con AMBOS valores nuevos
-          if (!isNaN(newGasLevel) && !isNaN(newVibration)) {
+          if (topic === MQTT_TOPIC_ACCEL) {
+              const accelPayload: DataAcelerometro = payload;
+              const nodoId = accelPayload.nodo_id;
+
+              const newX = parseFloat(accelPayload.x.toString());
+              if (!isNaN(newX)) setXValue(Math.round(newX));
+
+              const newY = parseFloat(accelPayload.y.toString());
+              if (!isNaN(newY)) setYValue(Math.round(newY));
+
+              const newZ = parseFloat(accelPayload.z.toString());
+              if (!isNaN(newZ)) setZValue(Math.round(newZ));
+
+              const newVibration = parseFloat(accelPayload.prom_xy.toString());
+              if (!isNaN(newVibration)) setEco2Level(Math.round(newVibration));
+              
+
+              if (!isNaN(newVibration)) {
+                  setVibrationValue(Number(newVibration.toFixed(2))); 
+                  
+                  const now = new Date();
+                  const timeStr = `${now.getHours()}:${now.getMinutes().toString().padStart(2, '0')}`;
+                  setTrendData((prev) => [
+                      ...prev.slice(-19),
+                      { time: timeStr, gas: prev[prev.length - 1]?.gas || 400, vibration: Number(newVibration.toFixed(2)) },
+                  ]);
+              }
+
+              // 2. 🟢 ACTUALIZAR LOS VALORES X, Y, Z EN EL SENSOR PARA EL MAPA
+              setSensors(prevSensors => 
+                  prevSensors.map(sensor => {
+                      if (sensor.id === nodoId) {
+                          return { 
+                              ...sensor, 
+                              x: accelPayload.x,
+                              y: accelPayload.y,
+                              z: accelPayload.z,
+                              prom_xy: accelPayload.prom_xy,
+                          };
+                      }
+                      return sensor;
+                  })
+              );
+              
+          } else if (topic === MQTT_TOPIC_AIR) {
+              const DataAire: DataAire = payload;
+              const nodoId = DataAire.nodo_id;
+
+              // 1. Actualizar métricas principales (promedio/último)
+              const newEco2 = parseFloat(DataAire.prom_eco2.toString()); 
+              if (!isNaN(newEco2)) setEco2Level(Math.round(newEco2));
+              
+              const newTvoc = parseFloat(DataAire.tvoc.toString()); 
+              if (!isNaN(newTvoc)) setTvocLevel(Math.round(newTvoc));
+
+              const newAqi = parseFloat(DataAire.aqi.toString()); 
+              if (!isNaN(newTvoc)) setAqiLevel(Math.round(newAqi));
+
+              const newTemperature = parseFloat(DataAire.temperatura.toString());
+              if (!isNaN(newTemperature)) setTemperature(Number(newTemperature.toFixed(1)));
+
+              const newHumidity = parseFloat(DataAire.humedad.toString());
+              if (!isNaN(newHumidity)) setHumidity(Number(newHumidity.toFixed(1)));
+
+              // 2. Actualizar estado del sensor individual para RoomMap
+              setSensors(prevSensors => 
+                  prevSensors.map(sensor => {
+                      if (sensor.id === nodoId) {
+                          // 🟢 CALCULAR EL STATUS BASADO EN LOS DATOS REALES
+                          const newStatus = determineSensorStatus(DataAire.eco2, DataAire.tvoc);
+                          return { 
+                              ...sensor,
+                              status: newStatus, // Actualizado con el status real
+                              gasLevel: DataAire.eco2, // eCO2 del nodo para tooltip
+                              tvocLevel: DataAire.tvoc, // TVOC del nodo para tooltip
+                              temperatura: DataAire.temperatura,
+                              humedad: DataAire.humedad,
+                              aqi: DataAire.aqi,
+                              prom_eco2: DataAire.prom_eco2,
+                          };
+                      }
+                      return sensor;
+                  })
+              );
+              
+              // 3. Actualizar la gráfica de tendencia (ECO2)
               const now = new Date();
               const timeStr = `${now.getHours()}:${now.getMinutes().toString().padStart(2, '0')}`;
               setTrendData((prev) => [
-                 ...prev.slice(-19),
-                 // Usamos newGasLevel y newVibration aquí
-                 { time: timeStr, gas: Math.round(newGasLevel), vibration: Number(newVibration.toFixed(2)) },
+                  ...prev.slice(-19),
+                  { time: timeStr, gas: Math.round(newEco2), vibration: prev[prev.length - 1]?.vibration || 0 },
               ]);
+          
+          // 🟢 LÓGICA PARA ALERTAS INDIVIDUALES DE NODO
+          } else if (topic === MQTT_TOPIC_NODE_ALERTS) {
+            const alertPayload: DataAlertaNodo = payload;
+              
+              // 1. Determinar la severidad y el tipo basado en el mensaje
+              let severity: AlertSeverity = "info";
+              let alertType: AlertType = "system";
+
+              // --- LÓGICA DE VIBRACIÓN ---
+              if (alertPayload.tipo_evento.includes("RIESGO ESTRUCTURAL")) {
+                // 🚨 MÁXIMA SEVERIDAD: RIESGO ESTRUCTURAL
+                severity = "critical";
+                alertType = "vibration";
+              } else if (alertPayload.tipo_evento.includes("TEMBLOR FUERTE")) {
+                // ⚠️ SEVERIDAD ALTA: TEMBLOR FUERTE
+                severity = "alert"; 
+                alertType = "vibration";
+              } else if (alertPayload.tipo_evento.includes("TEMBLOR LEVE")) {
+                // 🟡 SEVERIDAD MEDIA: TEMBLOR LEVE
+                severity = "warning"; 
+                alertType = "vibration";
+              } 
+              
+              // --- 💨 LÓGICA DE GAS (NUEVA) ---
+               else if (alertPayload.tipo_evento.includes("NIVELES TOXICOS")) {
+                // 🚨 CRÍTICA: NIVELES TOXICOS
+                severity = "critical";
+                alertType = "gas";
+              } else if (alertPayload.tipo_evento.includes("VENTILACION URGENTE")) {
+                // ⚠️ FUERTE: VENTILACION URGENTE
+                severity = "alert";
+                alertType = "gas";
+              } else if (alertPayload.tipo_evento.includes("CO2 ELEVADO") || alertPayload.tipo_evento.includes("ALERTA LEVE: VENTILAR")) {
+                // 🟡 LEVE: CO2 ELEVADO o VENTILAR
+                severity = "warning"; 
+                alertType = "gas";
+              }
+
+              else {
+                severity = "info"; 
+                alertType = "system";
+              }
+              
+              // 2. 🟢 CONSTRUIR EL MENSAJE REQUERIDO: "Evento en nodo N"
+              const message = `${alertPayload.tipo_evento} en nodo ${alertPayload.nodo_id}`;
+              
+              // 3. Añadir al estado de alertas
+              setAlerts(prev => [
+                  {
+                      id: Date.now(),
+                      type: alertType,
+                      message: message,
+                      timestamp: new Date(),
+                      severity: severity,
+                  },
+                  ...prev.slice(0, 9), // Mantener las últimas 10 alertas
+              ]);
+          } else if (topic === MQTT_TOPIC_GENERAL_ALERTS) {
+            const generalAlertPayload: { evento: string } = payload;
+
+            // Determinar la severidad y tipo para la lista
+            let severity: AlertSeverity = "critical"; 
+            let alertType: AlertType = "system";
+
+            const message = generalAlertPayload.evento;
+            if (message.includes("TEMBLOR")) {
+                alertType = "generalAlert";
+            } else if (message.includes("TOXICOS") || message.includes("VENTILACION")) {
+                alertType = "generalAlert";
+            }
+
+            // 1. 📢 MOSTRAR TOAST PARA ALERTA GENERAL (Dura 2 segundos por defecto)
+            toast({
+                title: "🚨 ¡ALERTA GENERAL CRÍTICA!",
+                description: generalAlertPayload.evento,
+                variant: "destructive", // Usa el color rojo (destructive) para el impacto visual
+                duration: 3500, // Duración de 2 segundos (2000 ms) como solicitaste
+            });
+
+            // 2. Añadir a la lista de alertas
+            setAlerts(prev => [
+                {
+                    id: Date.now(),
+                    type: alertType,
+                    message: `ALERTA GENERAL: ${generalAlertPayload.evento}`,
+                    timestamp: new Date(),
+                    severity: severity,
+                },
+                ...prev.slice(0, 9), 
+            ]);
+
           }
 
-        } catch (e) {
-          console.error("Error al procesar mensaje JSON/MQTT:", e);
-        }
+      } catch (e) {
+        console.error(`Error al procesar mensaje JSON/MQTT del tópico ${topic}:`, e);
       }
     });
 
@@ -138,161 +359,50 @@ const Index = () => {
         console.log('🔌 Desconectado de MQTT.');
       }
     };
-  }, []); // Dependencias vacías para que se ejecute solo al montar
+  }, []);
 
-
-  // Apply system state scenarios
+  // 🔴 BLOQUE DE SIMULACIÓN DE ESTADO ELIMINADO.
+  // Ahora solo las alertas son gestionadas por el systemState (si lo necesitas).
   useEffect(() => {
     if (systemState === "normal") {
-      setGasLevel(200);
-      setVibrationValue(0.4);
-      setSensors([
-        { id: 1, x: 25, y: 30, status: "normal", gasLevel: 180 },
-        { id: 2, x: 50, y: 35, status: "normal", gasLevel: 200 },
-        { id: 3, x: 75, y: 30, status: "normal", gasLevel: 190 },
-        { id: 4, x: 25, y: 70, status: "normal", gasLevel: 195 },
-        { id: 5, x: 75, y: 70, status: "normal", gasLevel: 210 },
-      ]);
+
       setAlerts([
-        {
-          id: Date.now(),
-          type: "system",
-          message: "Sistema funcionando normalmente",
-          timestamp: new Date(),
-          severity: "info",
-        },
+        { id: Date.now(), type: "system", message: "Sistema funcionando normalmente", timestamp: new Date(), severity: "info" },
       ]);
     } else if (systemState === "alert") {
-      //setGasLevel(450);
-      //setVibrationValue(0.6);
-      setSensors([
-        { id: 1, x: 25, y: 30, status: "normal", gasLevel: 180 },
-        { id: 2, x: 50, y: 35, status: "alert", gasLevel: 650 },
-        { id: 3, x: 75, y: 30, status: "normal", gasLevel: 190 },
-        { id: 4, x: 25, y: 70, status: "warning", gasLevel: 380 },
-        { id: 5, x: 75, y: 70, status: "normal", gasLevel: 210 },
-      ]);
+
       setAlerts([
-        {
-          id: Date.now(),
-          type: "gas",
-          message: "Fuga detectada por sensor 2 - Zona central",
-          timestamp: new Date(),
-          severity: "warning",
-        },
-        {
-          id: Date.now() + 1,
-          type: "gas",
-          message: "Nivel elevado en sensor 4",
-          timestamp: new Date(Date.now() - 30000),
-          severity: "warning",
-        },
+        { id: Date.now(), type: "gas", message: "Nivel de CO2 (ECO2) elevado - Revisar nodos", timestamp: new Date(), severity: "warning" },
       ]);
     } else if (systemState === "critical") {
-      //setGasLevel(720);
-      //setVibrationValue(2.3);
-      setSensors([
-        { id: 1, x: 25, y: 30, status: "alert", gasLevel: 680 },
-        { id: 2, x: 50, y: 35, status: "alert", gasLevel: 750 },
-        { id: 3, x: 75, y: 30, status: "warning", gasLevel: 420 },
-        { id: 4, x: 25, y: 70, status: "alert", gasLevel: 710 },
-        { id: 5, x: 75, y: 70, status: "alert", gasLevel: 690 },
-      ]);
+
       setAlerts([
-        {
-          id: Date.now(),
-          type: "gas",
-          message: "¡CRÍTICO! Múltiples sensores detectando fuga severa",
-          timestamp: new Date(),
-          severity: "critical",
-        },
-        {
-          id: Date.now() + 1,
-          type: "vibration",
-          message: "Vibración fuerte detectada - Posible sismo",
-          timestamp: new Date(Date.now() - 15000),
-          severity: "critical",
-        },
-        {
-          id: Date.now() + 2,
-          type: "gas",
-          message: "Sensor 2: nivel crítico 750 ppm",
-          timestamp: new Date(Date.now() - 30000),
-          severity: "critical",
-        },
-        {
-          id: Date.now() + 3,
-          type: "gas",
-          message: "Sensor 4: nivel crítico 710 ppm",
-          timestamp: new Date(Date.now() - 45000),
-          severity: "critical",
-        },
+        { id: Date.now(), type: "gas", message: "¡CRÍTICO! Múltiples sensores detectando niveles peligrosos", timestamp: new Date(), severity: "critical" },
+        { id: Date.now() + 1, type: "vibration", message: "Vibración fuerte detectada - Posible sismo/impacto", timestamp: new Date(Date.now() - 15000), severity: "critical" },
       ]);
     }
   }, [systemState]);
 
-  // Simulate real-time data updates
-  useEffect(() => {
-    const interval = setInterval(() => {
-      // ELIMINAMOS la simulación de 'gasLevel'. Ahora es controlado por MQTT.
-      // const newGasLevel = Math.max(150, Math.min(800, gasLevel + (Math.random() - 0.5) * 100));
-      // setGasLevel(Math.round(newGasLevel));
-
-      // Update vibration
-      //const newVibration = Math.max(0.1, Math.min(3, vibrationValue + (Math.random() - 0.5) * 0.5));
-      //setVibrationValue(Number(newVibration.toFixed(2)));
-
-      // Update temperature
-      setTemperature(Math.round(22 + Math.random() * 3));
-
-      // Update sensors
-      setSensors((prev) =>
-        prev.map((sensor) => {
-          const newLevel = Math.max(150, Math.min(800, sensor.gasLevel + (Math.random() - 0.5) * 80));
-          let status: "normal" | "warning" | "alert" = "normal";
-          if (newLevel > 600) status = "alert";
-          else if (newLevel > 300) status = "warning";
-          
-          return { ...sensor, gasLevel: Math.round(newLevel), status };
-        })
-      );
-
-      // Add random alerts
-      if (Math.random() > 0.85) {
-        const alertTypes = [
-          { type: "gas" as const, message: `Fuga detectada por sensor ${Math.ceil(Math.random() * 5)}`, severity: "warning" as const },
-          { type: "vibration" as const, message: "Vibración fuerte detectada en zona sur", severity: "critical" as const },
-          { type: "access" as const, message: "Nuevo acceso registrado", severity: "info" as const },
-        ];
-        const randomAlert = alertTypes[Math.floor(Math.random() * alertTypes.length)];
-        
-        setAlerts((prev) => [
-          {
-            id: Date.now(),
-            ...randomAlert,
-            timestamp: new Date(),
-          },
-          ...prev.slice(0, 9),
-        ]);
-      }
-
-      // Update trend data
-      const now = new Date();
-      const timeStr = `${now.getHours()}:${now.getMinutes().toString().padStart(2, '0')}`;
-      setTrendData((prev) => [
-        ...prev.slice(-19),
-        {time: timeStr, gas: gasLevel,vibration: Number(vibrationValue.toFixed(1))},
-      ]);
-    }, 3000);
-
-    return () => clearInterval(interval);
-  }, [gasLevel, vibrationValue]);
-
+  // Las funciones de estado para las MetricCards usan el promedio global de ECO2 y TVOC de MQTT
   const getVibrationIntensity = (): "leve" | "moderada" | "fuerte" => {
-    if (vibrationValue < 1) return "leve";
+    if (vibrationValue < 0.5) return "leve";
     if (vibrationValue < 2) return "moderada";
     return "fuerte";
   };
+
+  const getEco2Status = (): "normal" | "warning" | "alert" | "critical" => {
+    if (eco2Level > 2000) return "critical"; 
+    if (eco2Level > 1000) return "alert"; 
+    if (eco2Level > 800) return "warning";
+    return "normal";
+  };
+
+  // const getTvocStatus = (): "normal" | "warning" | "alert" | "critical" => {
+  //   if (tvocLevel > 600) return "critical"; 
+  //   if (tvocLevel > 300) return "alert"; 
+  //   if (tvocLevel > 100) return "warning"; 
+  //   return "normal";
+  // };
 
   return (
     <div className="min-h-screen bg-background">
@@ -325,38 +435,67 @@ const Index = () => {
         </div>
         {/* Quick Metrics */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+
+          <MetricCard
+            title="Temperatura"
+            value={temperature}
+            unit="°C"
+            icon={ThermometerSun}
+            status={temperature > 30 ? "warning" : "normal"}
+          />
+
+          <MetricCard
+            title="Humedad"
+            value={humidity}
+            unit="%"
+            icon={Droplets}
+            status={humidity > 60 ? "warning" : "normal"}
+          />
+          {/* <MetricCard
+            title="Tiempo Activo"
+            value="2.5"
+            unit="hrs"
+            icon={Clock}
+            status="normal"
+          /> */}
+          {/* 🟢 CAMBIO: Restauramos la Metric Card de eCO2 */}
+          <MetricCard
+            title="eCO2 Promedio"
+            value={eco2Level}
+            unit="ppm"
+            icon={Wind} // Usamos Activity o el icono de Gas que prefieras
+            status={getEco2Status()}
+          />
+
           <MetricCard
             title="Personas en Salón"
             value={peopleCount}
             icon={Users}
             status="normal"
           />
-          <MetricCard
-            title="Temperatura"
-            value={temperature}
-            unit="°C"
-            icon={ThermometerSun}
-            status="normal"
-          />
-          <MetricCard
-            title="Tiempo Activo"
-            value="2.5"
-            unit="hrs"
-            icon={Clock}
-            status="normal"
-          />
-          <MetricCard
-            title="Gas Promedio"
-            value={Math.round(sensors.reduce((acc, s) => acc + s.gasLevel, 0) / sensors.length)}
-            unit="ppm"
-            icon={Users}
-            status={gasLevel > 300 ? "warning" : "normal"}
-          />
+          
+          {/* 🟢 NUEVO: METRIC CARD DE TVOC */}
+          {/* <MetricCard
+            title="TVOC Promedio"
+            value={tvocLevel}
+            unit="ppb"
+            icon={Activity} // Puedes usar otro icono si prefieres
+            status={getTvocStatus()}
+          /> */}
         </div>
 
         {/* Main Monitoring Section */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <GasLevelMeter level={gasLevel} />
+          {/* Usamos eco2Level como el "nivel de gas" (CO2) */}
+          {/* <GasLevelMeter level={eco2Level} label="Nivel de eCO2" max={2500} />  */}
+          
+          {/* 🟢 NUEVO: GAS LEVEL METER: TVOC */}
+          <TvocLevelMeter 
+            level={tvocLevel} 
+            label="Nivel de TVOC (ppb)" 
+            max={1000} // Valor máximo de TVOC recomendado
+          />
+
           <VibrationIndicator intensity={getVibrationIntensity()} value={vibrationValue} />
         </div>
 

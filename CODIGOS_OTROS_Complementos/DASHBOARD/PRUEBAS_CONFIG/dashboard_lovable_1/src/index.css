@@ -35,6 +35,10 @@ All colors MUST be HSL.
     --warning: 38 95% 55%;
     --warning-foreground: 0 0% 100%;
 
+    /* 🟢 NUEVA DEFINICIÓN PARA ALERT (Naranja Fuerte, HSL de #ff8c00 es ~30 100% 50%) */
+    --alert: 30 100% 50%; 
+    --alert-foreground: 0 0% 100%; /* Texto blanco */
+    
     --success: 142 70% 50%;
     --success-foreground: 0 0% 100%;
 

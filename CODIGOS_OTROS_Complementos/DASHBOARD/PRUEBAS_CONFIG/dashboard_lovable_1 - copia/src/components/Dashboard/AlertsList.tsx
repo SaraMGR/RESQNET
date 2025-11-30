@@ -1,13 +1,13 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { AlertTriangle, Activity, Waves, CheckCircle } from "lucide-react";
+import { AlertTriangle, Activity, Waves, CheckCircle, Siren } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
 interface Alert {
   id: number;
-  type: "gas" | "vibration" | "access" | "system";
+  type: "gas" | "vibration" | "access" | "system" | "aqi" | "generalAlert";
   message: string;
   timestamp: Date;
-  severity: "info" | "warning" | "critical";
+  severity: "info" | "alert" | "warning" | "critical";
 }
 
 interface AlertsListProps {
@@ -23,6 +23,8 @@ export const AlertsList = ({ alerts }: AlertsListProps) => {
         return Waves;
       case "access":
         return Activity;
+      case "generalAlert":
+        return Siren
       default:
         return CheckCircle;
     }
@@ -34,6 +36,8 @@ export const AlertsList = ({ alerts }: AlertsListProps) => {
         return { bg: "bg-destructive/20", text: "text-destructive", border: "border-destructive/50" };
       case "warning":
         return { bg: "bg-warning/20", text: "text-warning", border: "border-warning/50" };
+      case "alert":
+        return { bg: "bg-alert/20", text: "text-alert", border: "border-alert/50" };
       default:
         return { bg: "bg-success/20", text: "text-success", border: "border-success/50" };
     }

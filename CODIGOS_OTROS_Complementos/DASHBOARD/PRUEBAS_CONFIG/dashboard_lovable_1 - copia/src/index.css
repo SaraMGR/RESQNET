@@ -35,6 +35,9 @@ All colors MUST be HSL.
     --warning: 38 95% 55%;
     --warning-foreground: 0 0% 100%;
 
+    --alert: 30 100% 50%; /* Naranja Fuerte, HSL de #FF8C00 (~30 100% 50%) */
+    --alert-foreground: 0 0% 100%; /* Texto blanco */
+
     --success: 142 70% 50%;
     --success-foreground: 0 0% 100%;
 
@@ -49,6 +52,26 @@ All colors MUST be HSL.
     --chart-3: 38 95% 55%;
     --chart-4: 0 75% 60%;
     --chart-5: 280 65% 60%;
+  }
+
+  /* Definición de keyframes para el parpadeo */
+  @keyframes pulse-background {
+    0%, 100% {
+      opacity: 0.6; /* Un poco de opacidad base */
+    }
+    50% {
+      opacity: 1; /* Opacidad completa para el pico del parpadeo */
+    }
+  }
+
+  /* Otro keyframe para un parpadeo más sutil con el color de fondo */
+  @keyframes blink-border {
+    0%, 100% {
+      border-color: hsl(var(--border)); /* Color de borde normal */
+    }
+    50% {
+      border-color: currentColor; /* Usa el color actual del texto (status color) */
+    }
   }
 }
 

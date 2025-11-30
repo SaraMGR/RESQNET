@@ -2,13 +2,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Activity } from "lucide-react";
 import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
 
-interface GasLevelMeterProps {
+interface TvocLevelMeterProps {
   level: number;
   label?: string; // Hacemos opcional con '?' y definimos el tipo
   max?: number;   // Hacemos opcional con '?' y definimos el tipo
 }
 
-export const GasLevelMeter = ({ level, label = "Nivel de eCO2", max = 2500 }: GasLevelMeterProps) => {
+export const TvocLevelMeter = ({ level, label = "Nivel de eCO2", max = 2200 }: TvocLevelMeterProps) => {
   
   // Usamos el 'max' pasado como prop, con un valor por defecto de 2500
   const maxLevel = max; 
@@ -16,9 +16,9 @@ export const GasLevelMeter = ({ level, label = "Nivel de eCO2", max = 2500 }: Ga
   
   const getStatus = () => {
     // 3. ALERTA LEVE: CO2 ELEVADO (> 1000 ppm) -> WARNING
-    if (level > 2000) return { color: "#ef4444", text: "Crítico", bg: "bg-destructive/20" }; // CRÍTICO
-    if (level > 1000) return { color: "#f59e0b", text: "Advertencia", bg: "bg-warning/20" }; // WARNING (Alerta Leve)
-    return { color: "#10b981", text: "Normal", bg: "bg-success/20" }; // NORMAL (<= 1000 ppm)
+    if (level > 2200) return { color: "#ef4444", text: "Crítico", bg: "bg-destructive/20" }; // CRÍTICO
+    if (level > 400) return { color: "#f59e0b", text: "Advertencia", bg: "bg-warning/20" }; // WARNING (Alerta Leve)
+    return { color: "#10b981", text: "Normal", bg: "bg-success/20" }; // NORMAL (<= 400 ppb)
   };
 
   const status = getStatus();
@@ -85,15 +85,15 @@ export const GasLevelMeter = ({ level, label = "Nivel de eCO2", max = 2500 }: Ga
             </div>
             <div className="grid grid-cols-3 gap-2 text-xs">
               <div className="text-center">
-                <div className="text-success font-semibold">0-1000</div> {/* 🟢 ACTUALIZADO */}
+                <div className="text-success font-semibold">0-400</div> {/* 🟢 ACTUALIZADO */}
                 <div className="text-muted-foreground">Normal</div>
               </div>
               <div className="text-center">
-                <div className="text-warning font-semibold">1000-2000</div> {/* 🟢 ACTUALIZADO */}
+                <div className="text-warning font-semibold">400-2000</div> {/* 🟢 ACTUALIZADO */}
                 <div className="text-muted-foreground">Advertencia</div>
               </div>
               <div className="text-center">
-                <div className="text-destructive font-semibold">2000+</div> {/* 🟢 ACTUALIZADO */}
+                <div className="text-destructive font-semibold">2200+</div> {/* 🟢 ACTUALIZADO */}
                 <div className="text-muted-foreground">Crítico</div>
               </div>
             </div>

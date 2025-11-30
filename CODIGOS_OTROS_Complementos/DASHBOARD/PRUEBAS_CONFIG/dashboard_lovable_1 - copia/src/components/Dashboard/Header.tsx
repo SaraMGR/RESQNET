@@ -10,7 +10,7 @@ export const Header = () => {
           </div>
           <div className="text-center">
             <h1 className="text-3xl font-bold text-foreground tracking-wide">RESQNET</h1>
-            <p className="text-sm text-muted-foreground mt-0.5">Prototipo de Sistema de Seguridad</p>
+            <p className="text-sm text-muted-foreground mt-0.5">Sistema de Seguridad</p>
           </div>
         </div>
       </div>
