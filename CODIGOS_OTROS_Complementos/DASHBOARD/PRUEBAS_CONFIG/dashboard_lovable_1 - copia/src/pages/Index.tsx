@@ -62,11 +62,12 @@ interface DataHuella {
     personas_activas: number;
     id_usuario: number;
     estado: "IN" | "OUT";
+    nombre: string;
 }
 
 interface AccessRecord {
   id: number; // Usaremos id_usuario como id
-  name: string; // Nombre o ID de usuario
+  name: string; // Nombre o ID de usuario 
   entryTime: Date;
   exitTime: Date | null;
   status: "inside" | "outside";
@@ -368,11 +369,9 @@ const Index = () => {
 
           } else if (topic === MQTT_TOPIC_FINGERPRINT_ACCESS) {
               const huellaPayload: DataHuella = payload;
-              const { id_usuario, estado, personas_activas } = huellaPayload;
+              const { id_usuario, estado, personas_activas, nombre} = huellaPayload;
               const now = new Date();
-
-              console.log(`[HUELLA] Usuario: ${id_usuario}, Estado: ${estado}, Total Activas: ${personas_activas}`); // 👈 AÑADE ESTO
-
+              
               // 1. Actualizar el conteo total de personas en el salón
               setPeopleCount(personas_activas);
 
@@ -380,9 +379,7 @@ const Index = () => {
               setActiveUsers(prevActiveUsers => {
                   const newActiveUsers = new Map(prevActiveUsers);
                   const currentRecord = newActiveUsers.get(id_usuario);
-                  
-                  // Nombre temporal: Usamos el ID del usuario
-                  const userName = `Usuario ${id_usuario}`;
+                  const userName = nombre;
 
                   if (estado === "IN") {
                       // Entrada: Crear un nuevo registro
@@ -403,7 +400,8 @@ const Index = () => {
                       // Salida: Actualizar el registro activo
                       if (currentRecord && currentRecord.status === "inside") {
                           const updatedRecord = { 
-                              ...currentRecord, 
+                              ...currentRecord,
+                              name: currentRecord.name, 
                               exitTime: now, 
                               status: "outside" as const,
                           };
@@ -459,7 +457,7 @@ const Index = () => {
   return (
     <div className="min-h-screen bg-background">
       <Header />
-      
+
       <main className="container mx-auto px-6 py-6 space-y-6">
         {/* System State Simulator */}
         <div className="flex justify-center gap-3 mb-4">
