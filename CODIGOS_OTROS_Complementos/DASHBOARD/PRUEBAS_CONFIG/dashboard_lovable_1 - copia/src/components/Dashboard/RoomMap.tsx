@@ -22,8 +22,8 @@ interface RoomMapProps {
 
 // Constantes de posición fijas para los nodos
 const SENSOR_POSITIONS = {
-    1: { x: 10, y: 90, name: "Nodo 1 (Esquina Izq.)" },
-    2: { x: 90, y: 90, name: "Nodo 2 (Esquina Der.)" },
+    1: { x: 15, y: 90, name: "Nodo 1 (Esquina Izq.)" },
+    2: { x: 85, y: 90, name: "Nodo 2 (Esquina Der.)" },
     3: { x: 50, y: 35, name: "Nodo 3 (Centro)" },
     // Los nodos 4 y 5 se ignoran en el mapa por la lógica de filtrado de mainSensors
 };

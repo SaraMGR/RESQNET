@@ -54,7 +54,7 @@ interface DataAire {
 // 🟢 NUEVA INTERFAZ PARA ALERTAS DE NODO
 interface DataAlertaNodo {
    tipo_evento: string;
-   nodo_id: number;
+   nodo: number;
 }
 
 // 🟢 NUEVA INTERFAZ PARA PAYLOAD DE HUELLA
@@ -78,28 +78,32 @@ type SensorStatus = "normal" | "warning" | "alert" | "critical";
 type AlertType = "gas" | "vibration" | "access" | "system" | "generalAlert";
 type AlertSeverity = "info" | "alert" | "warning" | "critical";
 
-const determineSensorStatus = (eco2: number, tvoc: number): SensorStatus => {
-    let status: SensorStatus = "normal";
+// Define el orden de severidad (mayor a menor)
+const STATE_PRIORITY: Record<SystemState, number> = {
+    "normal": 0,
+    "alert": 1, // Corresponde a "warning" o "alert" de SensorStatus
+    "critical": 2,
+};
 
-    // 1. Evaluación de eCO2
-    if (eco2 > 2000) {
-        status = "critical";
-    } else if (eco2 > 1000) {
-        status = "alert";
-    } else if (eco2 > 800) {
-        status = "warning";
+// Función para determinar el nuevo estado del sistema basado en la severidad de una nueva alerta
+const getNextSystemState = (current: SystemState, newSeverity: AlertSeverity): SystemState => {
+    // Mapear AlertSeverity a SystemState
+    let newSystemState: SystemState;
+    if (newSeverity === "critical") {
+        newSystemState = "critical";
+    } else if (newSeverity === "alert" || newSeverity === "warning") {
+        newSystemState = "alert";
+    } else {
+        // info o normal
+        newSystemState = "normal";
     }
 
-    // 2. Evaluación de TVOC (Sobrescribe si es más crítico)
-    if (tvoc > 600) {
-        status = "critical";
-    } else if (tvoc > 300 && status !== "critical") {
-        status = "alert";
-    } else if (tvoc > 100 && status !== "critical" && status !== "alert") {
-        status = "warning";
+    // Solo sube de estado si la nueva severidad es mayor a la actual
+    if (STATE_PRIORITY[newSystemState] > STATE_PRIORITY[current]) {
+        return newSystemState;
     }
-    
-    return status;
+    // Si la nueva alerta es menor, mantenemos el estado actual del sistema (hasta que se decida resetear)
+    return current;
 };
 
 const Index = () => {
@@ -197,7 +201,7 @@ const Index = () => {
               if (!isNaN(newZ)) setZValue(Math.round(newZ));
 
               const newVibration = parseFloat(accelPayload.prom_xy.toString());
-              if (!isNaN(newVibration)) setEco2Level(Math.round(newVibration));
+              if (!isNaN(newVibration)) setVibrationValue(Math.round(newVibration));
               
 
               if (!isNaN(newVibration)) {
@@ -247,26 +251,26 @@ const Index = () => {
               const newHumidity = parseFloat(DataAire.humedad.toString());
               if (!isNaN(newHumidity)) setHumidity(Number(newHumidity.toFixed(1)));
 
-              // 2. Actualizar estado del sensor individual para RoomMap
-              setSensors(prevSensors => 
-                  prevSensors.map(sensor => {
-                      if (sensor.id === nodoId) {
-                          // 🟢 CALCULAR EL STATUS BASADO EN LOS DATOS REALES
-                          const newStatus = determineSensorStatus(DataAire.eco2, DataAire.tvoc);
-                          return { 
-                              ...sensor,
-                              status: newStatus, // Actualizado con el status real
-                              gasLevel: DataAire.eco2, // eCO2 del nodo para tooltip
-                              tvocLevel: DataAire.tvoc, // TVOC del nodo para tooltip
-                              temperatura: DataAire.temperatura,
-                              humedad: DataAire.humedad,
-                              aqi: DataAire.aqi,
-                              prom_eco2: DataAire.prom_eco2,
-                          };
-                      }
-                      return sensor;
-                  })
-              );
+              // // 2. Actualizar estado del sensor individual para RoomMap
+              // setSensors(prevSensors => 
+              //     prevSensors.map(sensor => {
+              //         if (sensor.id === nodoId) {
+              //             // 🟢 CALCULAR EL STATUS BASADO EN LOS DATOS REALES
+              //             const newStatus = determineSensorStatus(DataAire.eco2, DataAire.tvoc);
+              //             return { 
+              //                 ...sensor,
+              //                 status: newStatus, // Actualizado con el status real
+              //                 gasLevel: DataAire.eco2, // eCO2 del nodo para tooltip
+              //                 tvocLevel: DataAire.tvoc, // TVOC del nodo para tooltip
+              //                 temperatura: DataAire.temperatura,
+              //                 humedad: DataAire.humedad,
+              //                 aqi: DataAire.aqi,
+              //                 prom_eco2: DataAire.prom_eco2,
+              //             };
+              //         }
+              //         return sensor;
+              //     })
+              // );
               
               // 3. Actualizar la gráfica de tendencia (ECO2)
               const now = new Date();
@@ -283,20 +287,24 @@ const Index = () => {
               // 1. Determinar la severidad y el tipo basado en el mensaje
               let severity: AlertSeverity = "info";
               let alertType: AlertType = "system";
+              let status: SensorStatus = "normal";
 
               // --- LÓGICA DE VIBRACIÓN ---
               if (alertPayload.tipo_evento.includes("RIESGO ESTRUCTURAL")) {
                 // 🚨 MÁXIMA SEVERIDAD: RIESGO ESTRUCTURAL
                 severity = "critical";
                 alertType = "vibration";
+                status = "critical";
               } else if (alertPayload.tipo_evento.includes("TEMBLOR FUERTE")) {
                 // ⚠️ SEVERIDAD ALTA: TEMBLOR FUERTE
                 severity = "alert"; 
                 alertType = "vibration";
+                status = "alert";
               } else if (alertPayload.tipo_evento.includes("TEMBLOR LEVE")) {
                 // 🟡 SEVERIDAD MEDIA: TEMBLOR LEVE
                 severity = "warning"; 
                 alertType = "vibration";
+                status = "warning";
               } 
               
               // --- 💨 LÓGICA DE GAS (NUEVA) ---
@@ -304,24 +312,44 @@ const Index = () => {
                 // 🚨 CRÍTICA: NIVELES TOXICOS
                 severity = "critical";
                 alertType = "gas";
+                status = "critical";
               } else if (alertPayload.tipo_evento.includes("VENTILACION URGENTE")) {
                 // ⚠️ FUERTE: VENTILACION URGENTE
                 severity = "alert";
                 alertType = "gas";
+                status = "alert";
               } else if (alertPayload.tipo_evento.includes("CO2 ELEVADO") || alertPayload.tipo_evento.includes("ALERTA LEVE: VENTILAR")) {
                 // 🟡 LEVE: CO2 ELEVADO o VENTILAR
                 severity = "warning"; 
                 alertType = "gas";
+                status = "warning";
               }
 
               else {
                 severity = "info"; 
                 alertType = "system";
+                status = "normal";
               }
               
               // 2. 🟢 CONSTRUIR EL MENSAJE REQUERIDO: "Evento en nodo N"
-              const message = `${alertPayload.tipo_evento} en nodo ${alertPayload.nodo_id}`;
+              const message = `${alertPayload.tipo_evento} en nodo ${alertPayload.nodo}`;
               
+              setSystemState(prevSystemState => getNextSystemState(prevSystemState, severity));
+
+              // 2. Actualizar estado del sensor individual para RoomMap
+              setSensors(prevSensors => 
+                prevSensors.map(sensor => {
+                    if (sensor.id === alertPayload.nodo) {
+                        // 🟢 CALCULAR EL STATUS BASADO EN LOS DATOS REALES
+                        return { 
+                            ...sensor,
+                            status: status, // Actualizado con el status real
+                        };
+                    }
+                    return sensor;
+                })
+              );
+
               // 3. Añadir al estado de alertas
               setAlerts(prev => [
                   {
@@ -347,6 +375,8 @@ const Index = () => {
                 alertType = "generalAlert";
             }
 
+            setSystemState(prevSystemState => getNextSystemState(prevSystemState, severity));
+            
             // 1. 📢 MOSTRAR TOAST PARA ALERTA GENERAL (Dura 2 segundos por defecto)
             toast({
                 title: "🚨 ¡ALERTA GENERAL CRÍTICA!",
